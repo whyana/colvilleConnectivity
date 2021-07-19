@@ -1,0 +1,202 @@
+---
+title: "Delta lake ice"
+author: "Xiao Yang"
+date: "6/2/2020"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+require(tidyverse)
+require(sf)
+library(lubridate)
+```
+
+## import data
+
+```{r}
+#Import lake ice fraction data from google earth engine script: https://code.earthengine.google.com/11757ed73298fa104aed9c5d5b86f5b6
+setwd("E:/Research/DeltaicConnectivity/ColvilleDelta/Data/lake ice")
+dat = read_csv(file = "lakeCoverFraction_1b786b4795b34fa035d55c102cc305e7.csv", col_types = "nnnnncnccnn")
+
+v = "20210304" #set the version of the data analysis, i.e. the date the code is run
+
+print("how many records?")
+dat %>% nrow()
+print("How many non-NA records")
+dat %>% na.omit() %>% nrow()
+
+dat = dat %>% na.omit()
+
+# Filter out cloudy observations
+dat = dat %>% 
+  filter(cloud <= 0.1,
+         clear <= 0.5,
+         CLOUD_COVER <= 25) %>% 
+  mutate(date = as_datetime(`system:time_start`*0.001),
+         year=year(date))
+  
+
+dat %>% nrow()
+```
+
+## quick look at data
+
+```{r}
+sampleId = dat %>% select(ID) %>% distinct() %>% sample_n(12)
+
+dat %>% mutate(year=as.factor(year)) %>% 
+  right_join(sampleId, by = "ID") %>% 
+  ggplot() + 
+  geom_point(aes(x = doy, y = SLIDE_snowIce, color = year)) +
+  facet_wrap(~ID, ncol = 3)
+```
+
+##  shift day of year to a day of year calculator that starts mid-summer. the first half of the new year is the freeze-up period, and the second half is the rbeakup period
+
+```{r}
+require(lubridate)
+
+## prep data and shifting doy days
+dat_sample = dat
+
+## shift doy
+mid_summer_start = 230
+dat_sample = dat_sample %>% 
+  left_join(tibble(sdoy = mid_summer_start: (365 + mid_summer_start), doy = sdoy %% 366), join = "doy")
+
+FUBU_cut = 60 + 365
+
+mdat = dat_sample %>% 
+  mutate(period = factor(sdoy >= FUBU_cut, levels = c(TRUE, FALSE), labels = c("BU", "FU"))) %>% 
+  select(ID, doy, ice_fraction = SLIDE_snowIce, sdoy, period, year) %>% 
+  mutate(ice_fraction = ice_fraction)
+# plot the ice fraction with the shifted calendar
+mdat %>% 
+  right_join(sampleId, by = "ID") %>% 
+  ggplot() +
+  geom_point(aes(x = sdoy, y = ice_fraction, color=year)) +
+  facet_wrap(~ID)
+```
+
+## model lake ice fraction phenology by creating two logistic regression models for the winter to mid Summer and for the mid-Summer through the winter of the following year. Then stitch together those models
+
+```{r}
+ice_flag_thresholds = c(0.2, 0.8) # >0.8 = ice covered, <0.2 not ice covered
+
+t1 = Sys.time()
+dat_mdl = mdat %>% 
+  group_by(ID, period) %>% 
+  nest() %>% 
+  mutate(
+    model = map(data, ~glm(ice_fraction~sdoy,
+                           data = .x,
+                           family = quasibinomial(link = "logit")))
+  ) %>% 
+  group_by(ID, period) %>% 
+  do({
+    tmp = .$model[[1]]
+    tibble(sdoy = mid_summer_start: (365 + mid_summer_start), 
+           fitted = predict.glm(tmp, newdata = tibble(sdoy = mid_summer_start: (365 + mid_summer_start)), type = "response", se.fit = F))
+  }) %>% 
+  ungroup()
+print(Sys.time() - t1)
+
+dat_mdl = dat_mdl %>% 
+  mutate(doy = as.integer(sdoy %% 366),
+         ice_flag = cut(fitted, breaks = c(0, ice_flag_thresholds, 1), labels = c("0", "1", "2"), include.lowest = T))
+  
+dat_mdl_merged = dat_mdl %>% 
+  filter((sdoy > 365 + 60 & period == "BU") | (sdoy < 365 + 60 & period == "FU"))
+
+lake_ice_modeled = dat_mdl_merged
+
+remove(dat_mdl_merged,
+       dat_mdl)
+# Export lake ice modeled phenology
+#save(lake_ice_modeled, file = paste0("lake_ice_modeled_", v, ".RData"))
+```
+
+### check modeled v.s. original data to make sure things look ok. 
+
+```{r}
+#select 2 example lakes--the one on the left is low functional connectivity, and the one on the right is always high functional connectivity
+sampleId = dat%>% filter(ID=="2926574" | ID=="2989039_2") %>% select(ID) %>% distinct()
+
+lake_ice_modeled %>% 
+  right_join(sampleId) %>% 
+  ggplot() +
+  geom_line(aes(x = sdoy, y = fitted)) +
+  geom_point(data = mdat %>% right_join(sampleId), aes(x = sdoy, y = ice_fraction, color=as.factor(year)), pch = 1) +
+  facet_wrap(~ID)+geom_hline(aes(yintercept=0.2), lty=2)+geom_hline(aes(yintercept=0.8), lty=2)+
+  theme_bw()+
+  theme(axis.title=element_text(family="Calibri", face="bold", size = (12)),
+        axis.text =element_text(family="Calibri",size = (12)),
+        strip.text = element_text(family="Calibri", size=(12), face="bold"),
+        legend.text = element_text(family="Calibri", size=(12)),
+        legend.title=element_blank(),
+        legend.position="bottom",
+        title = element_text(family="Calibri", face="bold", size=14))+ylab("ice fraction")+xlab("adjusted day of year")
+```
+
+
+### calculate lake ice durations using modeled lake ice phenology
+
+```{r}
+durations = lake_ice_modeled %>% 
+  group_by(ID) %>% 
+  summarise(ice_duration = as.integer(sum(ice_flag == 2)),
+            ice_free_duration = as.integer(sum(ice_flag == 0)),
+            total_transition_duration = as.integer(sum(ice_flag == 1)),
+            bu_transition_duration = as.integer(sum(ice_flag==1 & doy <230)),
+            fu_transition_duration = as.integer(sum(ice_flag==1 & doy>230))) %>% 
+  ungroup()
+
+testall=lake_ice_modeled %>% group_by(ID) %>% nest()
+res.all = NULL
+for (z in 1:length(testall$ID)){
+  ID = testall$ID[z]
+  buTrans= testall$data[[z]] %>% arrange(doy) %>% filter(period=="BU" & ice_flag==1)
+  buStart = buTrans$doy[1]
+  buEnd = buTrans$doy[length(buTrans$doy)]
+  fuTrans = testall$data[[z]] %>% arrange(doy) %>% filter(period=="FU" & ice_flag==1)
+  if(length(fuTrans$period)==0)next
+  fuStart =fuTrans$doy[1]
+  fuEnd =fuTrans$doy[length(fuTrans$doy)]
+  res = cbind.data.frame(ID, buStart, buEnd,fuStart, fuEnd, stringsAsFactors=F)
+  res.all = rbind.data.frame(res.all, res, stringsAsFactors = F)
+  print(z)
+}
+
+durations = durations %>% left_join(res.all, by="ID") %>% 
+  filter(fu_transition_duration!=0) #remove those in which the freeze-up duration was zero, because that means we probably didn't have enough data.
+
+#save durations
+save(durations, file = paste0("lake_ice_modeled_duration_colville_delta_", v, ".RData"))
+
+#Plot durations 
+lake_ice_modeled %>% 
+  ggplot(aes(x = sdoy, y =fitted, color = ID)) +
+  geom_line(show.legend = F)
+
+durations %>% 
+  ggplot() +
+  geom_histogram(aes(ice_duration), binwidth = 3)
+```
+
+
+# Count the number of observations from 1 week before to 1 week after the breakup and freeze-up periods
+```{r}
+bu_obs=dat %>% left_join(durations, by="ID") %>% mutate(bu_trans = ifelse(doy>(buStart-7)&doy<(buEnd+7), "yes", "no")) %>% filter(bu_trans=="yes") %>% group_by(ID) %>% summarise(count_bu=n())
+
+fu_obs=dat %>% left_join(durations, by="ID") %>% mutate(fu_trans = ifelse(doy>(fuStart-7)&doy<(fuEnd+7), "yes", "no")) %>% filter(fu_trans=="yes") %>% group_by(ID) %>% summarise(count_fu=n())
+
+no_obs=bu_obs %>% left_join(fu_obs, by="ID")
+
+setwd("E:/Research/DeltaicConnectivity/ColvilleDelta/Data/lake ice")
+save(no_obs, file= paste0("NumberOfObsTrans_", v, ".RData"))
+```
+

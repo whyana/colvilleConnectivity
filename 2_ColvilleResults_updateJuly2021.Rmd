@@ -1,0 +1,801 @@
+---
+title: "Untitled"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Libraries 
+```{r}
+library(tidyverse)
+library(sf)
+library(lubridate)
+library(grDevices)
+library(mapview)
+library(extrafont)
+library(ggpubr)
+library(ggmap)
+library(RgoogleMaps)
+library(broom)
+library(HistDAWass)
+library(dataRetrieval) 
+library(RgoogleMaps)
+library(sp)
+library(caret)
+library(rgeos)
+library(rnaturalearth)
+library(rnaturalearthdata)
+```
+
+# Imports/variables 
+```{r}
+# Our classification results from 1_ColvilleDeltaClassification_updateJuly2021.Rmd
+export.filePath = "E:/Research/DeltaicConnectivity/ColvilleDelta/Data/Outputs"
+export.fileName = "Colville_Classified_data_20210303"
+
+# Shapefiles for lakes 
+shapeFiles.filePath = "E:/Research/DeltaicConnectivity/ColvilleDelta/Data/Shapefiles"
+lakes.shapeFile = "ColvilleShapefilesEdited.shp"
+
+# GECI validation
+valFile.path="E:/Research/DeltaicConnectivity/ColvilleDelta/Data/DataDownloads"
+valFileName = "colvilleValidation20200508.csv"
+
+# old 1990s validation
+oldVal.path = "E:/Research/DeltaicConnectivity/ColvilleDelta/Data/validation1992"
+oldVal.file = "colville1992Classification.csv"
+
+# Piliouras & Rowland 2020 validation
+piliouras.folder="E:/Research/DeltaicConnectivity/Data/Pilioras and Rowland 2019/"
+piliouras_validation_results="PilouriasColvilleClassCompareNegBuf_20200520_good.shp"
+
+# lake elevation data
+elev.path = "E:/Research/DeltaicConnectivity/ColvilleDelta/Data/arcticDEM"
+elev.file ="AprilLakeElev20152017.csv"
+
+# The location and name of the Landsat ice dataset from Xiao
+ice.data.path = "E:/Research/DeltaicConnectivity/ColvilleDelta/Data/lake ice"
+ice.data.file = "lake_ice_modeled_duration_colville_delta_20210304.RData"
+ice.noObs= "NumberOfObsTrans_20210304.RData"
+
+# Alaskan river shapefile name and location:
+grwl.location ="E:/Research/001_FilesFromOGHardDrive/AK_riverIce/RiverIceDetect/Data/Shapefiles/MainGRWL"
+grwl.file= "150_Alaska_nolakes_widths.shp"
+
+# Location of and names of figures exported as part of this script
+figures.filePath = "C:/Users/whyana/OneDrive - University of North Carolina at Chapel Hill/DocumentsLaptop/001_ Graduate School/Research/Papers/ColvilleDeltaConnectivity/Figures/figures_raw"
+timeResultsMap.figure.name = "timeResultsFigure_map.pdf"
+timeResultsPlot.figure.name = "timeResultsFigure_plot.pdf"
+discharge.barplot.figure.name = "dischargeBarPlots.pdf"
+discharge.timeseries.figure.name = "dischargeTimeSeries.pdf"
+validation.figure.name = "validationFig.pdf"
+icefig.name="iceFigBarPlot.pdf"
+ice.noObs.name = "iceNoObsPlot.pdf"
+Figure1_ak ="alaskaMap.pdf"
+Figure1_colville = "deltaMap.pdf"
+elevFig = "elevFig.pdf"
+
+#Colors
+variable.col= "#F8766D"
+highcon.col = "#619CFF"
+lowcon.col = "#68DD84"
+
+```
+
+
+# Create a dataframe (final.lakes) that categorizes each lake as 'always high functional connectivity', 'always low functional connectivity' and 'variable functional connectivity' in relation to the four temporal time periods (200-2004, 2005-2009, 2010-2014, 2015-2019), which will be used later on in the code.
+```{r} 
+#####  information about connectivity through time #####  
+#import lake connectivity classifications and filter to only the temporal time periods
+setwd(export.filePath) 
+classifications = read_rds(export.fileName) %>% filter(time_period!="validation" & time_period!="high discharge"&time_period!="low discharge")
+connectivity.groups = classifications%>% dplyr::select(ID, time_period, connectivity) %>% 
+  spread(time_period, connectivity)
+
+#Import lake polygon shapefile
+setwd(shapeFiles.filePath)
+lakes.sf = st_read(lakes.shapeFile)
+
+# get lakes that are always high functional connectivity
+always.high.ids=connectivity.groups %>% 
+  filter(`2000-2004`=="high functional connectivity" & 
+           `2005-2009`=="high functional connectivity" & 
+           `2010-2014`=="high functional connectivity" & 
+           `2015-2019`=="high functional connectivity")
+always.high.ids=always.high.ids$ID
+
+#get lakes that are always low functional connectivity
+always.low.ids = connectivity.groups %>% 
+  filter(`2000-2004`=="low functional connectivity" & 
+           `2005-2009`=="low functional connectivity" & 
+           `2010-2014`=="low functional connectivity" & 
+           `2015-2019`=="low functional connectivity")
+always.low.ids=always.low.ids$ID
+
+# get lakes that go from high to low connectivity over time
+high.to.low.ids = connectivity.groups %>% 
+  filter((`2000-2004`=="high functional connectivity" & 
+           `2005-2009`=="high functional connectivity" & 
+           `2010-2014`=="high functional connectivity" & 
+           `2015-2019`=="low functional connectivity") |
+           (`2000-2004`=="high functional connectivity" & 
+           `2005-2009`=="low functional connectivity" & 
+           `2010-2014`=="low functional connectivity" & 
+           `2015-2019`=="low functional connectivity")
+           )
+high.to.low.ids=high.to.low.ids$ID
+
+# get lakes that go from low to high connectivity over time
+low.to.high.ids = connectivity.groups %>% 
+  filter((`2000-2004`=="low functional connectivity" & 
+           `2005-2009`=="high functional connectivity" & 
+           `2010-2014`=="high functional connectivity" & 
+           `2015-2019`=="high functional connectivity") |
+           (`2000-2004`=="low functional connectivity" & 
+           `2005-2009`=="low functional connectivity" & 
+           `2010-2014`=="high functional connectivity" & 
+           `2015-2019`=="high functional connectivity"))
+low.to.high.ids=low.to.high.ids$ID
+
+# get lakes that flip back and forth connectivity through time
+flip.ids = connectivity.groups %>% 
+  filter((`2000-2004`=="high functional connectivity" & 
+           `2005-2009`=="high functional connectivity" & 
+           `2010-2014`=="low functional connectivity" & 
+           `2015-2019`=="high functional connectivity") |
+           (`2000-2004`=="high functional connectivity" & 
+           `2005-2009`=="low functional connectivity" & 
+           `2010-2014`=="high functional connectivity" & 
+           `2015-2019`=="high functional connectivity")|
+           (`2000-2004`=="high functional connectivity" & 
+           `2005-2009`=="low functional connectivity" & 
+           `2010-2014`=="high functional connectivity" & 
+           `2015-2019`=="low functional connectivity"))
+flip.ids = flip.ids$ID
+
+# classify connectivity variability through time
+final.lakes=lakes.sf %>% mutate(
+  group = case_when(
+    ID %in% always.high.ids ~ "always high functional connectivity",
+    ID %in% always.low.ids ~ "always low functional connectivity",
+    ID %in% high.to.low.ids ~ "high to low functional connectivity over time",
+    ID %in% low.to.high.ids ~ "low to high functional connectivity over time",
+    ID %in% flip.ids ~ "connectivity switches back and forth through time"
+  )
+) %>% filter(!is.na(group)) %>% mutate(group2 = ifelse(ID %in%flip.ids| ID %in% low.to.high.ids | 
+                                                         ID %in% high.to.low.ids, "variable functional connectivity", group)) %>% 
+  mutate(Row.Number=row_number())  
+
+final.lakes
+
+```
+
+# Study area map - Figure 1
+```{r}
+setwd(figures.filePath)
+# Get satellite imagery for the colville delta inset
+bbox_delta = GetMap.bbox(c(-151.4, -150.0), c(70.0, 70.5))
+map_delta = get_map(location = c(bbox_delta$lon.center, bbox_delta$lat.center), zoom=bbox_delta$zoom, maptype="satellite") 
+
+
+# get data for the large map of Alaska
+ak.sf=ne_countries(returnclass = "sf", scale=50) %>% st_as_sf() %>% dplyr::filter(formal_en=="Canada" | formal_en=="United States of America") %>% 
+  sf::st_set_crs(4326) %>% 
+  sf::st_transform(2964) %>% mutate(Row.Number=dplyr::row_number())
+ak.sp = as(ak.sf, Class="Spatial")
+ak.sp.plot = tidy(ak.sp) %>% group_by(id) %>% nest() %>% ungroup()%>% mutate(Row.Number= row_number()) %>% 
+  left_join(ak.sp@data %>% as_tibble(), by="Row.Number") %>% 
+  unnest(cols=data)
+
+setwd(grwl.location)
+rivers.sf =st_read(grwl.file) %>% st_transform(2964) 
+
+setwd(figures.filePath)
+ ak.map=ggplot(ak.sf)+
+  geom_sf(fill="gray88")+
+   geom_sf(data=rivers.sf, inherit.aes = TRUE)+
+   coord_sf(xlim=c(-2550000,2500000), ylim=c(2500000, 7600000))+theme_bw()+
+   theme(axis.title=element_text(family="Calibri", face="bold", size = (12)),
+        axis.text =element_text(family="Calibri",size = (12)),
+        strip.text = element_text(family="Calibri", size=(12), face="bold"),
+        legend.text = element_text(family="Calibri", size=(12)),
+        legend.title=element_blank(),
+        legend.position="bottom",
+        title = element_text(family="Calibri", face="bold", size=12))
+ggsave(ak.map, width=6.5, height=4, device=cairo_pdf, filename=Figure1_ak)   
+ 
+# plot the Delta map
+setwd(shapeFiles.filePath)
+lakes.sf = st_read(lakes.shapeFile)
+#### Combine results and shapefiles ####
+lake.results.sf = lakes.sf%>% mutate(Row.Number=row_number())
+lake.results.sp = as_Spatial(lake.results.sf)
+lake.results.sp.plot = tidy(lake.results.sp) %>% group_by(id) %>% nest() %>% ungroup() %>% mutate(Row.Number= row_number()) %>% left_join(lake.results.sp@data %>% as_tibble(), by="Row.Number") %>% unnest(cols=data)
+
+setwd(figures.filePath)
+bbox = GetMap.bbox(c(-151.4, -150.0), c(70.0, 70.5))
+map = get_map(location = c(bbox$lon.center, bbox$lat.center), zoom=bbox$zoom, maptype="satellite") 
+
+delta.map=ggmap(map)+
+  scale_x_continuous(limits=c(-151.3,-150.2 ), expand=c(0,0))+
+  scale_y_continuous(limits=c(70.13,70.5), expand=c(0,0))+
+ # geom_polygon(data=lake.results.sp.plot,aes(x=long, y=lat, group=group), fill=NA,color="black", inherit.aes = FALSE)+
+  theme_bw()+
+    theme(axis.title=element_text(family="Calibri", face="bold", size = (12)),
+        axis.text =element_text(family="Calibri",size = (12)),
+        strip.text = element_text(family="Calibri", size=(12), face="bold"),
+        legend.text = element_text(family="Calibri", size=(12)),
+        legend.title=element_blank(),
+        legend.position="bottom",
+        title = element_text(family="Calibri", face="bold", size=12))+
+  labs(fill="")+xlab("")+ylab("")
+ggsave(delta.map, width=6.5, height=4, device=cairo_pdf, filename=Figure1_colville )
+```
+
+
+# Results figure through time - Figure 5
+```{r}  
+# Import lake shapefiles 
+setwd(shapeFiles.filePath)
+lakes.sf = st_read(lakes.shapeFile)
+
+
+#### Combine results and shapefiles ####
+lake.results.sf = classifications %>%  left_join(lakes.sf, by="ID") %>% st_as_sf() %>% mutate(Row.Number=row_number())
+lake.results.sp = as_Spatial(lake.results.sf)
+lake.results.sp.plot = tidy(lake.results.sp) %>% group_by(id) %>% nest() %>% ungroup() %>% mutate(Row.Number= row_number()) %>% left_join(lake.results.sp@data %>% as_tibble(), by="Row.Number") %>% 
+  select(-data.y) %>% unnest(cols=data.x)
+
+#get the lakes that are variable through time
+changing.lakes.sf=final.lakes %>% filter(group2=="variable functional connectivity") %>% mutate(Row.Number=row_number())
+changing.lakes.sp =as_Spatial(changing.lakes.sf)
+changing.lakes.sp.plot = tidy(changing.lakes.sp) %>% group_by(id) %>% nest() %>% ungroup() %>% mutate(Row.Number=row_number()) %>% left_join(changing.lakes.sp@data %>% as_tibble(), by="Row.Number") %>% 
+  unnest()
+
+# Make maps for each time period
+setwd(figures.filePath)
+bbox = GetMap.bbox(c(-151.4, -150.0), c(70.0, 70.5))
+map = get_map(location = c(bbox$lon.center, bbox$lat.center), zoom=bbox$zoom, maptype="satellite") 
+
+temporalMaps= ggmap(map)+
+  scale_x_continuous(limits=c(-151.3,-150.2 ), expand=c(0,0))+
+  scale_y_continuous(limits=c(70.13,70.5), expand=c(0,0))+
+  geom_polygon(data=lake.results.sp.plot,aes(x=long, y=lat, group=group, fill=connectivity),color=NA, inherit.aes = FALSE)+
+  geom_polygon(data=changing.lakes.sp.plot,aes(x=long, y=lat, group=group),
+               fill=NA, color="red",size=0.08,inherit.aes = FALSE)+
+  facet_wrap(~time_period, nrow=1)+
+  theme_bw()+
+    theme(axis.title=element_text(family="Calibri", face="bold", size = (12)),
+        axis.text =element_text(family="Calibri",size = (12)),
+        strip.text = element_text(family="Calibri", size=(12), face="bold"),
+        legend.text = element_text(family="Calibri", size=(12)),
+        legend.title=element_blank(),
+        legend.position="bottom",
+        title = element_text(family="Calibri", face="bold", size=12))+
+  labs(fill="")+xlab("")+ylab("")+
+  scale_fill_manual(values=c(highcon.col,lowcon.col),
+                                  labels=c("high functional connectivity","low functional connecctivity"))
+ggsave(temporalMaps, width=6.5, height=4, device=cairo_pdf, filename=timeResultsMap.figure.name )
+
+# Make barplots for each time period
+temporalPlots=lake.results.sf %>% ggplot()+
+  geom_bar(aes(x=connectivity, fill=connectivity))+theme_bw()+facet_wrap(~time_period, nrow=1)+
+  scale_fill_manual(values=c("#619CFF","#00BA38"),
+                                  labels=c("high functional connectivity","low functional connecctivity"))+
+  theme_bw()+
+    theme(axis.title=element_text(family="Calibri", face="bold", size = (12)),
+        axis.text =element_text(family="Calibri",size = (12)),
+        strip.text = element_text(family="Calibri", size=(12), face="bold"),
+        legend.text = element_text(family="Calibri", size=(12)),
+        axis.text.x = element_text(angle=25, hjust=1),
+        legend.position="bottom",
+        title = element_text(family="Calibri", face="bold", size=14))+xlab("")+ylab("")+
+    guides(fill=guide_legend(nrow=1,byrow=TRUE))+
+    labs(fill="")+scale_fill_manual(values=c(highcon.col,lowcon.col))
+ggsave(temporalPlots, width=6.5, height=3.7, device=cairo_pdf, filename=timeResultsPlot.figure.name )  
+
+# Overall plot of lake changes over time---not used in final paper
+final.lakes.sf=final.lakes %>% mutate(Row.Number=row_number())
+final.lakes.sp =as_Spatial(final.lakes.sf)
+final.lakes.sp.plot = tidy(final.lakes.sp) %>% group_by(id) %>% nest() %>% ungroup() %>% mutate(Row.Number=row_number()) %>% left_join(final.lakes.sp@data %>% as_tibble(), by="Row.Number") %>% 
+  unnest()
+
+pal=c("always high functional connectivity"=highcon.col, "always low functional connectivity"=lowcon.col, 
+      "connectivity switches back and forth through time"="#F8766D",
+      "high to low functional connectivity over time" = "#F7FD31",
+      "low to high functional connectivity over time"="#F4C2FA")
+
+ggmap(map)+
+  scale_x_continuous(limits=c(-151.3,-150.2 ), expand=c(0,0))+
+  scale_y_continuous(limits=c(70.13,70.5), expand=c(0,0))+
+  geom_polygon(data=final.lakes.sp.plot,aes(x=long, y=lat, group=group, fill=group1),inherit.aes = FALSE)+
+  theme_bw()+
+    theme(axis.title=element_text(family="Calibri", face="bold", size = (12)),
+        axis.text =element_text(family="Calibri",size = (12)),
+        strip.text = element_text(family="Calibri", size=(12), face="bold"),
+        legend.text = element_text(family="Calibri", size=(12)),
+        legend.title=element_blank(),
+        legend.position="bottom",
+        title = element_text(family="Calibri", face="bold", size=12))+
+  labs(fill="")+xlab("")+ylab("")+guides(fill=guide_legend(nrow=3))+
+  scale_fill_manual(values=pal)
+
+```
+
+# Discharge results figure - Figure 6
+```{r}  
+# Import classifications
+setwd(export.filePath)
+dis.class = read_rds(export.fileName) %>% filter(time_period=="high discharge"| time_period=="low discharge")
+
+#Import discharge data
+siteNumber="15875000"
+ColvilleInfo <- readNWISsite(siteNumber)
+parameterCd <- "00060"
+rawDailyData <- readNWISdv(siteNumber,parameterCd,
+                      "2000-01-01","2019-12-31") %>% 
+  mutate(date = as_date(Date),
+         month = month(date),
+         doy = yday(date),
+         year=year(date)) %>% as_tibble() %>% 
+  filter(month>=6 & month <=9) %>% rename(discharge = X_00060_00003) 
+# Get yearly max, mean, total summertime daily discharge
+yearlySummerSummary = rawDailyData %>%  
+  mutate(time_period = case_when(
+      year<2005 ~ "2000-2004",
+      year>=2005 & year < 2010 ~ "2005-2009",
+      year >= 2010 & year <2015 ~ "2010-2014",
+      year >=2015 ~ "2015-2019"
+    )) %>% group_by(year) %>% 
+  summarise(mean_discharge=mean(discharge),
+            total_discharge=sum(discharge), 
+            max_discharge = max(discharge)) %>% filter(year!=2002) # remove 2002 because we don't have data from that year in June 
+ 
+# Plot classification bar plots for low and high discharge years
+setwd(figures.filePath)
+dis.barplot=ggplot()+geom_bar(data=dis.class,aes(x=connectivity, fill=connectivity))+
+  theme_bw()+facet_wrap(~time_period)+
+    theme(axis.title=element_text(family="Calibri", face="bold", size = (12)),
+        axis.text =element_text(family="Calibri",size = (12)),
+        strip.text = element_text(family="Calibri", size=(12), face="bold"),
+        legend.text = element_text(family="Calibri", size=(12)),
+        legend.title=element_blank(),
+        legend.position="bottom",
+        title = element_text(family="Calibri", face="bold", size=14))+
+  labs(fill="")+xlab("")+ylab("count")+
+  scale_fill_manual(values=c(lowcon.col,highcon.col),
+                                  labels=c("low functional connectivity", 
+                                           "high functional connectivity"),
+                    breaks =c("low functional connectivity", 
+                                           "high functional connectivity"))+
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 10))
+# Plot discharge timeseries for the Colville at Umiat gage
+dis.timeseries=ggplot()+geom_line(data=yearlySummerSummary,aes(x=year, y=max_discharge*0.028316847))+theme_bw()+
+  theme(axis.title=element_text(family="Calibri", face="bold", size = (12)),
+        axis.text =element_text(family="Calibri",size = (12)),
+        strip.text = element_text(family="Calibri", size=(12), face="bold"),
+        legend.text = element_text(family="Calibri", size=(12)),
+        legend.title=element_blank(),
+        legend.position="bottom",
+        title = element_text(family="Calibri", face="bold", size=14))+ylab("max summer discharge (m^3/s)")+xlab("year")
+
+
+ggsave(dis.barplot, width=6.0, height=4, device=cairo_pdf, filename=discharge.barplot.figure.name )
+ggsave(dis.timeseries, width=6.5, height=3.5, device=cairo_pdf, filename=discharge.timeseries.figure.name )
+
+# Print number of lakes that switch from high to low connectivity in high to low discharge years
+low.dis.df = dis.class %>% filter(time_period=="low discharge") %>% rename(connectivity.low=connectivity) %>% select(-data, -time_period, -class)
+high.dis.df = dis.class %>% filter(time_period=="high discharge") %>% rename(connectivity.high=connectivity) %>% select(-data, -time_period, -class)
+
+change.lakes =low.dis.df %>% left_join(high.dis.df, by="ID") %>% filter(connectivity.high!=connectivity.low)
+change.lakes
+change.lakes %>% left_join(lakes.sf, by="ID") %>% st_as_sf() %>% mapview()
+length(change.lakes$ID)
+```
+
+# Lake ice analysis / figure (Landsat) - Figure 8 (results) & Figure 9 (uncertainty)
+```{r}   
+# load lake ice 
+#lake ice 
+setwd(ice.data.path)
+load(ice.data.file) #loads a variable called durations
+
+#Import lakes that are not within the delta
+joined.lakeIce =final.lakes %>% as_tibble() %>% select(-type, -Row.Number, -geometry) %>% 
+  left_join(durations, by="ID")
+
+# Calculate general summary statistics for lakes of each connectivity type
+summary.stats=joined.lakeIce%>% group_by(group2) %>% 
+  summarise(mean_buStart=mean(buStart), mean_buEnd=mean(buEnd), mean_buTransDur = mean(bu_transition_duration),med_buStart=median(buStart),
+            mean_dur= mean(ice_duration), meanIceFreeDur =mean(ice_free_duration), mean_fu_TransDur = mean(fu_transition_duration),
+            sd_buStart=sd(buStart), sd_buEnd=sd(buEnd), mean_fuStart=mean(fuStart), mean_fuEnd=mean(fuEnd))
+#print out all the values for the summary statistics
+summary.stats
+summary.stats$group2
+summary.stats$mean_buStart
+summary.stats$mean_buEnd
+summary.stats$sd_buStart
+summary.stats$mean_buTransDur
+summary.stats$mean_dur
+summary.stats$med_buStart
+summary.stats$mean_fuStart
+summary.stats$mean_fuEnd
+summary.stats$mean_fu_TransDur
+summary.stats$meanIceFreeDur
+
+# Calculate Mann Whitney U statistics because we don't assume normality---used in the paper
+final.manu=joined.lakeIce
+wilcox.test(final.manu[final.manu$group2=="always high functional connectivity",]$ice_duration,
+            final.manu[final.manu$group2=="always low functional connectivity",]$ice_duration)
+wilcox.test(final.manu[final.manu$group2=="always high functional connectivity",]$buStart,
+            final.manu[final.manu$group2=="always low functional connectivity",]$buStart)
+wilcox.test(final.manu[final.manu$group2=="always high functional connectivity",]$buEnd,
+            final.manu[final.manu$group2=="always low functional connectivity",]$buEnd)
+wilcox.test(final.manu[final.manu$group2=="always high functional connectivity",]$fuStart,
+            final.manu[final.manu$group2=="always low functional connectivity",]$fuStart)
+wilcox.test(final.manu[final.manu$group2=="always high functional connectivity",]$fuEnd,
+            final.manu[final.manu$group2=="always low functional connectivity",]$fuEnd)
+wilcox.test(final.manu[final.manu$group2=="always high functional connectivity",]$bu_transition_duration,
+            final.manu[final.manu$group2=="always low functional connectivity",]$bu_transition_duration)
+wilcox.test(final.manu[final.manu$group2=="always high functional connectivity",]$fu_transition_duration,
+            final.manu[final.manu$group2=="always low functional connectivity",]$fu_transition_duration)
+wilcox.test(final.manu[final.manu$group2=="always high functional connectivity",]$ice_free_duration,
+            final.manu[final.manu$group2=="always low functional connectivity",]$ice_free_duration)
+
+# Make baoxplots plots for each variable
+gathered.ice=joined.lakeIce %>% as_tibble() %>% #select(-geometry, -delta,-group, -Row.Number, -total_transition_duration)%>% 
+  gather( key="var", value="value", buStart, buEnd, bu_transition_duration, fuStart, fuEnd, fu_transition_duration, 
+          ice_duration, ice_free_duration) %>% 
+  mutate(var=case_when(
+    var == "buStart" ~ "breakup start",
+    var == "buEnd" ~ "breakup end",
+    var == "fuStart" ~ "freeze-up start",
+    var == "fuEnd" ~ "freeze-up end",
+    var=="bu_transition_duration" ~ "breakup transition duration",
+    var =="fu_transition_duration" ~ "freeze-up transition duration",
+    var =="ice_duration"~ "total ice duration",
+    var =="ice_free_duration" ~ "ice-free duration"
+  ))
+dates.df = gathered.ice %>% filter(var=="breakup start" | var=="breakup end" | var =="freeze-up start"| var=="freeze-up end")
+dates.df$var=factor(dates.df$var, levels=c("breakup start", "breakup end", "freeze-up start", "freeze-up end", "breakup transition duration", "freeze-up transition duration", "total ice duration", "ice-free duration"))
+dates.df$group2 = factor(dates.df$group2, levels=c("always high functional connectivity", "always low functional connectivity", "variable functional connectivity", "non-delta"))
+dates.plot=ggplot(data=dates.df %>% filter(group2!="variable functional connectivity"))+geom_boxplot(aes(x=var, y=value, fill=group2), fatten=0.6, size=0.4)+theme_bw()+
+  theme(text = element_text(size=12, family="Calibri"),
+        axis.title=element_text(family="Calibri", face="bold", size = (12)),
+        title = element_text(family="Calibri", face="bold", size=12),
+        axis.text = element_text(size=12),
+        legend.text = element_text(size=12),
+        legend.title = element_blank(),
+        legend.position = "bottom")+
+  guides(fill=guide_legend(nrow=3, byrow=TRUE))+
+        scale_fill_manual(values=c(highcon.col,lowcon.col,variable.col,"#cb7ed9"))+
+  xlab("")+ylab("day of year")+
+  guides(fill=guide_legend(nrow=1, byrow=TRUE))+scale_x_discrete(labels = function(x) str_wrap(x, width = 10))
+dates.plot
+dur.df = gathered.ice %>% filter(var=="breakup transition duration"| var=="freeze-up transition duration" | var =="total ice duration"| var== "ice-free duration")
+dur.df$var=factor(dur.df$var, levels=c("breakup start", "breakup end", "freeze-up start", "freeze-up end", "breakup transition duration", "freeze-up transition duration", "total ice duration", "ice-free duration"))
+dur.df$group2 = factor(dur.df$group2, levels=c("always high functional connectivity", "always low functional connectivity", "variable functional connectivity", "non-delta"))
+dur.plot=ggplot(data=dur.df %>% filter(group2!="variable functional connectivity"))+geom_boxplot(aes(x=var, y=value, fill=group2), size=0.4, fatten=0.6)+theme_bw()+
+  theme(text = element_text(size=12, family="Calibri"),
+        axis.title=element_text(family="Calibri", face="bold", size = (12)),
+        title = element_text(family="Calibri", face="bold", size=12),
+        axis.text = element_text(size=12),
+        legend.text = element_text(size=12),
+        legend.title = element_blank(),
+        legend.position = "bottom")+
+  guides(fill=guide_legend(nrow=3, byrow=TRUE))+
+        scale_fill_manual(values=c(highcon.col,lowcon.col,variable.col,"#cb7ed9"))+
+  xlab("")+ylab("days")+guides(fill=guide_legend(nrow=1, byrow=TRUE))+scale_x_discrete(labels = function(x) str_wrap(x, width = 10))
+dur.plot
+
+# Export final ice results figure
+ice.plot=ggarrange(dates.plot, dur.plot, common.legend = TRUE, legend="bottom")
+
+setwd(figures.filePath)
+ggsave(ice.plot, width=6.5, height=3.75, device=cairo_pdf, filename=icefig.name )
+
+
+## Compare the number of observations within 1week prior through 1 week after breakup start and end
+setwd(ice.data.path)
+load(ice.noObs)
+
+joined.iceCount = final.lakes %>% left_join(no_obs, by="ID") 
+
+joined.iceCount %>% summarise(bu=mean(count_bu), fu=mean(count_fu))
+
+ice.noObs.plot=joined.iceCount %>% ggplot()+geom_density(aes(count_bu, fill="breakup observations"), alpha=0.5)+
+  geom_density(aes(count_fu, fill="freeze-up observations"), alpha=0.5)+
+  theme_bw()+
+  theme(axis.title=element_text(family="Calibri", face="bold", size = (12)),
+        axis.text =element_text(family="Calibri",size = (12)),
+        strip.text = element_text(family="Calibri", size=(12), face="bold"),
+        legend.text = element_text(family="Calibri", size=(12)),
+        legend.title=element_blank(),
+        title = element_text(family="Calibri", face="bold", size=12))+xlab("number of observations +/- 1 week")
+setwd(figures.filePath)
+ggsave(ice.noObs.plot, width=6, height=3.75, device=cairo_pdf, filename=ice.noObs.name )
+
+
+#extra plot showing the number of obs within a week of breakup by lake on a map --not used in final manuscript
+joined.iceCount.sp =as_Spatial(joined.iceCount)
+joined.iceCount.sp.plot = tidy(joined.iceCount.sp) %>% group_by(id) %>% nest() %>% ungroup() %>% mutate(Row.Number=row_number()) %>% left_join(joined.iceCount.sp@data %>% as_tibble(), by="Row.Number") %>% 
+  unnest()
+
+setwd(figures.filePath)
+bbox = GetMap.bbox(c(-151.4, -150.0), c(70.0, 70.5))
+map = get_map(location = c(bbox$lon.center, bbox$lat.center), zoom=bbox$zoom, maptype="satellite") 
+
+ggmap(map)+
+  scale_x_continuous(limits=c(-151.3,-150.2 ), expand=c(0,0))+
+  scale_y_continuous(limits=c(70.13,70.5), expand=c(0,0))+
+  geom_polygon(data=joined.iceCount.sp.plot,aes(x=long, y=lat, group=group, fill=count_fu),color=NA, inherit.aes = FALSE)+
+  theme_bw()+
+    theme(axis.title=element_text(family="Calibri", face="bold", size = (12)),
+        axis.text =element_text(family="Calibri",size = (12)),
+        strip.text = element_text(family="Calibri", size=(12), face="bold"),
+        legend.text = element_text(family="Calibri", size=(12)),
+        legend.title=element_blank(),
+        legend.position="bottom",
+        legend.key.width=unit(dev.size()[1]/10, "inches"),
+        title = element_text(family="Calibri", face="bold", size=12))+
+  labs(fill="")+xlab("")+ylab("")+
+  paletteer::scale_fill_paletteer_c("viridis::viridis",limits=c(0,30))
+
+```
+
+
+# Validation figures - Figure 4
+```{r}
+#### Google Earth Validation
+# Import our classification results 
+setwd(export.filePath)
+results.gee = read_rds(export.fileName) %>% filter(time_period =="validation")
+# Import GECI validation
+setwd(valFile.path)
+val = read.csv(valFileName, stringsAsFactors= F) %>% as_tibble()
+
+# Join GECI validation to results data frame
+results.val = results.gee %>% left_join(val, by="ID") %>% select(-Row.Number, -note) %>% rename(connected=Connected)
+
+# Assess accuracy!
+manualValidation=results.val %>% mutate(validation = case_when(
+  connected=="n" & connectivity=="low functional connectivity" ~ 
+    "agree: low functional connectivity / no channel present",
+  connected=="n" & connectivity=="high functional connectivity" ~ 
+    "disagree: high functional connectivity / no channel present",
+  connected=="y" & connectivity=="high functional connectivity" ~ 
+    "agree: high functional connectivity / channel present",
+  connected=="y" & connectivity=="low functional connectivity" ~ 
+    "disagree: low functional connectivity / channel present",
+  connected=="m" & connectivity == "low functional connectivity" ~ 
+    "uncertain: low functional connectivity / uncertain channel presence",
+  connected=="m" & connectivity =="high functional connectivity" ~
+    "uncertain: high functional connectivity / uncertain channel presence"),
+  validationSimple = case_when(
+    (connected=="n" & connectivity=="low functional connectivity") | (connected=="y" & connectivity=="high functional connectivity") ~ "agree",
+    (connected=="y" & connectivity=="low functional connectivity") | (connected=="n" & connectivity=="high functional connectivity") ~ "disagree",
+    connected=="m"~"uncertain channel presence"
+  ),
+  referenceClass = case_when(connected=="n"~"low connectivity", connected=="y"~"high connectivity", connected=="m"~"uncertain"),
+  predictionClass = case_when(connectivity=="low functional connectivity"~"low connectivity", 
+  connectivity=="high functional connectivity"~"high connectivity")) %>% 
+  mutate(connected = case_when(
+    connected =="m" ~ "uncertain channel connection",
+    connected == "n" ~ "no visible channel connection",
+    connected =="y" ~ "visible channel connection" ))
+
+
+# Plot a confusion matrix (excluding lakes with uncertain channel connection in the validation data)
+manualValidationFilt = manualValidation %>% filter(connected!="uncertain channel connection")
+confusionMatrix(factor(manualValidationFilt$predictionClass), factor(manualValidationFilt$referenceClass), positive = NULL, dnn = c("Prediction", "Reference"))
+
+# Calculate overall accuracy and print it
+totalNum =length(manualValidationFilt$ID)
+agreeNum=manualValidationFilt %>% filter(validationSimple=="agree")
+agreeNum=length(agreeNum$ID)
+agreeNum/totalNum #overall correct pct
+
+# make a map (not used in the final paper) of the validation results
+setwd(shapeFiles.filePath)
+lakes.sf = st_read(lakes.shapeFile)
+oldValidationFilt=manualValidationFilt %>% left_join(lakes.sf, by="ID") %>% st_as_sf()
+
+
+# Create a plot showing the results for validation
+new.valPlot =ggplot()+geom_bar(data=manualValidation, aes(x=referenceClass, fill=connected))+
+  scale_fill_manual(values = c(lowcon.col, variable.col, highcon.col))+theme_bw()+
+  theme(text = element_text(size=12, family="Calibri"),
+        axis.title=element_text(family="Calibri", face="bold", size = (12)),
+        title = element_text(family="Calibri", face="bold", size=12),
+        axis.text = element_text(size=12),
+        legend.text = element_text(size=12))+
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 10))+facet_wrap(~connectivity)+
+  xlab("")+labs(fill="channel presence in 2013-2016 Google Earth composite image")
+
+##### 1997 validation analysis
+# Import our results in the correct time period
+setwd(export.filePath)
+results.early = read_rds(export.fileName) %>% filter(time_period =="2000-2004")
+
+# Import the 1997 validation 
+setwd(oldVal.path)
+oldval = read.csv(oldVal.file, stringsAsFactors = F) %>% as_tibble() %>% select(-Connected, -Row.Number)
+
+# Join the results and validation 
+res.oldVal = results.early %>% left_join(oldval, by="ID")
+
+# print an interactive mapview of the validation results to explore the data
+res.oldVal  %>% left_join(lakes.sf,by="ID") %>% st_as_sf() %>% mapview(zcol="MapClassification")
+# print statistics about the validation accuracy
+res.oldVal %>% mutate(classVal = case_when(
+  MapClassification=="Deep Connected Lake"| MapClassification=="Deep Tapped Lake w/ Low-Water Connection" | 
+    MapClassification=="Deep Tapped Lake w/ High-Water Connection" | MapClassification=="Shallow Tapped Lake w/ High-water Connection" ~ "high connectivity",
+    MapClassification=="Deep Isolated Lake" | MapClassification=="Shallow Isolated Pond" ~ "low connectivity",
+    MapClassification=="Brackish Pond" ~"brackish"
+)) %>% group_by(classVal) %>% summarise(count=n(), sumLow =sum(connectivity=="low functional connectivity"), sumHigh=sum(connectivity=="high functional connectivity"))
+
+# Get the data ready for confuusionMatrix analysis
+old.results=res.oldVal %>% mutate(classVal = case_when(
+  MapClassification=="Deep Connected Lake"| MapClassification=="Deep Tapped Lake w/ Low-Water Connection" | 
+    MapClassification=="Deep Tapped Lake w/ High-Water Connection" | MapClassification=="Shallow Tapped Lake w/ High-water Connection" ~ "high functional connectivity",
+    MapClassification=="Deep Isolated Lake" | MapClassification=="Shallow Isolated Pond" ~ "low functional connectivity",
+    MapClassification=="Brackish Pond" ~"brackish"
+))
+
+oldValidationFilt = old.results %>% filter(classVal!="brackish") #remove brackish lakes because they don't have connectivity info
+# print the confusion matrix
+confusionMatrix(factor(oldValidationFilt$connectivity), factor(oldValidationFilt$classVal), positive = NULL, dnn = c("Prediction", "Reference"))
+# print overall accuracy
+totalNum =length(oldValidationFilt$ID)
+agreeNum=oldValidationFilt %>% filter(connectivity==classVal)
+agreeNum=length(agreeNum$ID)
+agreeNum/totalNum #overall correct pct
+# Plot!
+## reorder legend colors
+old.results$MapClassification = factor(old.results$MapClassification, levels = c("Deep Connected Lake",
+                                                                               "Deep Tapped Lake w/ Low-Water Connection",
+                                                                               "Deep Tapped Lake w/ High-Water Connection",
+                                                                               "Shallow Tapped Lake w/ High-water Connection",
+                                                                               "Deep Isolated Lake",
+                                                                               "Shallow Isolated Pond",
+                                                                               "Brackish Pond"))
+old.results$classVal=factor(old.results$classVal, levels=c("high functional connectivity", "low functional connectivity", "brackish"))
+old.valPlot=ggplot()+geom_bar(data=old.results, aes(x=classVal, fill=MapClassification))+
+  theme_bw()+
+  theme(text = element_text(size=12, family="Calibri"),
+        axis.title=element_text(family="Calibri", face="bold", size = (12)),
+        title = element_text(family="Calibri", face="bold", size=12),
+        axis.text = element_text(size=12),
+        legend.text = element_text(size=12))+
+  scale_fill_manual(values=c("#0A0D51","#271AA8", "#5177BC", "#95B7E8","#27911C", "#9BE58F", "#A7700E"))+
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 10))+ facet_wrap(~connectivity)+
+  xlab("")+labs(fill="Jorgenson et al. (1997) 1992 lake classification") 
+
+old.valPlot
+
+###### Piliouas Validation
+
+setwd(piliouras.folder)
+
+#import Piliouras & Rowland (2020) validation data
+reference.results = st_read(piliouras_validation_results) %>% as_tibble() %>% 
+  dplyr::select(ID, count, delta,geometry) %>% mutate(ID=as.character(ID))
+
+# Import our classification results 
+setwd(export.filePath)
+results.gee = read_rds(export.fileName) %>% filter(time_period =="validation")
+
+combined.results= results.gee %>% left_join(reference.results, by="ID") %>%
+  mutate(reference.class = ifelse(count <=10, "low connectivity", "high connectivity"),
+         prediction.class= ifelse(connectivity=="high functional connectivity", "high connectivity", "low connectivity")) 
+# print confusion matrix
+confusionMatrix(factor(combined.results$prediction.class), factor(combined.results$reference.class), positive = NULL, dnn = c("Prediction", "Reference"))
+# get data ready for plotting results on a map---not used for the final paper
+plottingValidation = combined.results%>% mutate(
+  validation = case_when(
+    prediction.class=="low connectivity" & reference.class=="low connectivity" ~ 
+      "agree: low connectivity",
+    prediction.class=="high connectivity" & reference.class=="high connectivity" ~ 
+      "agree: high connectivity",
+    prediction.class=="low connectivity" & reference.class=="high connectivity" ~ 
+      "disagree: ours-low connectivity, Piliouras-high connectivity",
+    prediction.class=="high connectivity" & reference.class=="low connectivity" ~ 
+      "disagree: ours-high connectivity, Piliouras-low connectivity"))
+col.center= c(lon = -150.8, lat = 70.32)
+pil.plot = get_googlemap(col.center, zoom=10, maptype="satellite") %>% ggmap()+
+  geom_sf(data=plottingValidation %>% st_as_sf(), aes(fill=validation), inherit.aes = FALSE, size=0.1)+
+  #scale_y_continuous(limits=c(70.15, 70.49), expand=c(0,0))+
+ # scale_x_continuous(limits=c(-151.2, -150.38), expand=c(0,0))+
+  theme(text = element_text(size=16, family="Calibri"),
+        axis.text.x = element_text(angle=45, hjust=1),
+        legend.position = "bottom",
+        legend.title = element_blank())+
+  scale_fill_manual(values=c( "#28B463","#82E0AA",
+                              "#F39C12", "#FAD7A0"),
+                    labels=c("agree: high connectivity",
+                              "agree: low connectivity",
+                             "disagree: ours-high connectivity, Piliouras-low connectivity",
+                             "disagree: ours-low connectivity, Piliouras-high connectivity"
+                             )
+                    )+
+  xlab("")+ylab("")+ggtitle("")+ 
+  guides(fill=guide_legend(nrow=4,byrow=TRUE))
+pil.plot 
+
+# Make a barplot of validation results
+old.results$MapClassification = factor(old.results$MapClassification, levels = c("Deep Connected Lake",
+                                                                               "Deep Tapped Lake w/ Low-Water Connection",
+                                                                               "Deep Tapped Lake w/ High-Water Connection",
+                                                                               "Shallow Tapped Lake w/ High-water Connection",
+                                                                               "Deep Isolated Lake",
+                                                                               "Shallow Isolated Pond",
+                                                                               "Brackish Pond"))
+old.results$classVal=factor(old.results$classVal, levels=c("high functional connectivity", "low functional connectivity", "brackish"))
+pil.barPlot=ggplot()+geom_bar(data=combined.results, aes(x=reference.class, fill=reference.class))+
+  theme_bw()+
+  theme(text = element_text(size=12, family="Calibri"),
+        axis.title=element_text(family="Calibri", face="bold", size = (12)),
+        title = element_text(family="Calibri", face="bold", size=12),
+        axis.text = element_text(size=12),
+        legend.text = element_text(size=12))+
+  scale_fill_manual(values = c(highcon.col,lowcon.col))+
+  scale_x_discrete(labels = function(x) str_wrap(x, width = 10))+ facet_wrap(~connectivity)+
+  xlab("")+labs(fill="Piliouras et al. (2020) 2014 lake classification") 
+
+pil.barPlot
+
+
+# combine all validation barplots into one figure--Figure 4!
+setwd(figures.filePath)
+combo = ggarrange(new.valPlot, old.valPlot,pil.barPlot, nrow=3, labels=c("a.", "b.", "c."))
+ggsave(combo, file=validation.figure.name, width=6.5, height=8.5, device=cairo_pdf )
+```
+
+
+
+# Lake elevation
+```{r}
+# lake elevation
+# Import our classification results 
+setwd(export.filePath)
+results.gee = read_rds(export.fileName) %>% filter(time_period =="2015-2019")
+
+##compare category to arcticDEM depth
+setwd(elev.path)
+
+#Most, but not all images are from 2015 or later 
+lakes.dem.april = read.csv(elev.file) %>% as_tibble() %>% 
+  right_join(results.gee, by="ID") %>% 
+  filter(!is.na(elev2015_mean) & !is.na(elev2017_mean) & !is.na(connectivity)) #remove lakes with no elevation data
+lakes.dem.gather = lakes.dem.april %>% select(ID, elev2015_mean, elev2017_mean, connectivity) %>% 
+    gather( key="elevationYear", value="elevation.m",  -ID, - connectivity) 
+
+lakes.dem.gather %>% group_by(connectivity, elevationYear) %>% summarise(mean_elev=mean(elevation.m))  
+
+# plot elevation results on a boxplot
+elev.fig = ggplot()+geom_boxplot(data=lakes.dem.gather, aes(y=elevation.m, x=elevationYear, fill=connectivity))+
+  theme_bw()+
+  theme(text = element_text(size=12, family="Calibri"),
+        axis.text = element_text(size=12),
+        legend.text = element_text(size=12),
+                    legend.position="bottom",
+        legend.title = element_blank())+
+  scale_fill_manual(values=c("#619CFF","#00BA38","#F8766D"))+
+  ylab("mean April elevation (m)")+scale_x_discrete(labels = function(x) str_wrap(x, width = 10))+
+  xlab("")
+# test for differences in elevation between high and low functional connectivity lakes. 
+wilcox.test(lakes.dem.april[lakes.dem.april$connectivity=="high functional connectivity",]$elev2015_mean,
+            lakes.dem.april[lakes.dem.april$connectivity=="low functional connectivity",]$elev2015_mean)
+wilcox.test(lakes.dem.april[lakes.dem.april$connectivity=="high functional connectivity",]$elev2017_mean,
+            lakes.dem.april[lakes.dem.april$connectivity=="low functional connectivity",]$elev2017_mean)
+
+lakes.dem.gather %>% group_by(elevationYear, connectivity) %>% summarise(meanE=mean(elevation.m), sdE = sd(elevation.m))
+
+setwd(figures.filePath)
+ggsave(elev.fig, width=4, height=4, device=cairo_pdf, filename=elevFig ) 
+```
+
