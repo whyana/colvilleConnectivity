@@ -8,7 +8,7 @@
 3. Download of April 2015 and April 2017 lake elevations from ArcticDEM [https://code.earthengine.google.com/73182eaa7b7bf0aa15959dba44bde194]
 
 ### Pre-processing 
-- Delta lake ice.Rmd
+- Delta lake ice.Rmd - By Xiao Yang, some edits by Wayana Dolan
    - **description**: Using downloaded ice fraction data to model 20-year lake ice phenology
    - **inputs**:
       - lakeCoverFraction_1b786b4795b34fa035d55c102cc305e7.csv: Output from step 2 of data download. 
@@ -28,7 +28,7 @@
     - Colville_Classified_data_20210303: The results of the functional connectivity classification for each lake within each time period
     - densityPlotExample.pdf: A pdf of the density plot portion of Figure 2.
     - clusteringExample.pdf: A pdf of Figure 3---clustering example
-- 2_ColvilleResultes.Rmd
+- 2_ColvilleResultes_updateJuly2021.Rmd
   - **Description**: Uses connectivity classifications to: validate classification methods, study how connectivity has changed over time in the Colville Delta, and analyze the relationship between connectivity and elevation, discharge, and lake ice
   - **input files**
     - Colville_Classified_data_20210303: The results of the functional connectivity classification for each lake within each time period
@@ -117,8 +117,8 @@
         - fuEnd: Freeze-up end--modeled first day of fall/winter with ice fraction >80% (day of year)
    - NumberOfObsTrans_20210304.RData: number of ice observations from Landsat for each lake within both the breakup and freeze-up periods 
         - ID: Lake ID
-        - count_bu: number of ice observations used during the modeled breakup period
-        - count_fu: number of ice observations used during the modeled freeze-up period
+        - count_bu: number of ice observations used one week prior through one week after the modeled breakup period
+        - count_fu: number of ice observations used one week prior through one week after the modeled freeze-up period
    - 150_Alaska_nolakes_widths.shp: Alaskan rivers from the GRWL Summary Statistics database (Allen & Pavelsky, 2018) that are wider than 150m.
         - Join_Count: number of point grwl observations contained in the summary grwl reach. 
         - id: Reach ID (not the same as GRWL reach IDs)
