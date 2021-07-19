@@ -4,6 +4,7 @@
 ### Google Earth Engine - links to each file
 1. Download RGB data for lakes and channel apex: [https://code.earthengine.google.com/73c33750b9f646df31b761aa50776e9d]
 2. Download lake ice data [https://code.earthengine.google.com/11757ed73298fa104aed9c5d5b86f5b6] - by Xiao Yang
+3. Do we need the piliouras code?
 
 ### R scripts --descriptions of each script. 
 - 1_ColvilleDeltaClassification_updateJuly2021.Rmd
@@ -24,16 +25,21 @@
     - ColvilleShapefilesEdited.shp: The lake polygon shapefiles
     - colvilleValidation20200508.csv: Connectivity validation data from GECI imagery
     - colville1992Classification.csv: Connectivity validation data from Jorgenson et al. (1997) -----------------******
+    - PilouriasColvilleClassCompareNegBuf_20200520_good.shp: Connectivity validation data from Piliouras and Rowland (2020) *****
     - AprilLakeElev20152017.csv: Mean April lake elevation in 2015 and 2017 from ArcticDEM strip data. -----------******
     - lake_ice_modeled_duration_colville_delta_20210304.RData: Modeled lake ice phenology from Landsat -------------*****
     - NumberOfObsTrans_20210304.RData: number of ice observations from Landsat for each lake within both the breakup and freeze-up periods -------------******
   - **output files**
+    - alaskaMap.pdf: Figure 1 part 1 (map of Alaska)
+    - deltaMap.pdf: Figure 1 part 2 (map of the Colville Delta)
+    - validationFig.pdf: Figure 4 (validation of connectivity algorithm against three datasets)
     - timeResultsFigure_map.pdf: The map portion of Figure 5 (connectivity through time)
     - timeResultsFigure_plot.pdf: The barplot portion of Figure 5 (connectivity through time)
     - dischargeBarPlots.pdf: The barplot portion of Figure 6 (comparing connectivity and discharge)
     - dischargeTimeSeries.pdf: The lineplot portion of Figure 6 (comparing connectivity and discharge)
-    - validationFig.pdf: Figure 4 (validation of connectivity algorithm against three datasets)
-    - 
+    - elevFig.pdf: Figure 7 (boxplot comparing connectivity and lake surface elevation)
+    - iceFigBarPlot.pdf: Figure 8 (comparison of functional connectivity to ice phenology)
+    - iceNoObsPlot.pdf: Figure 9 (number of ice observations used in ice phenology calculations)
 
 ### File variable descriptions
    - ColvilleDataExport_20210210_75pctCloud.csv: Lake reflectance data - from google earth engine script no. 1, also included in data repository
