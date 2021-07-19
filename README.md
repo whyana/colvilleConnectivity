@@ -58,7 +58,7 @@ All datafiles mentioned below can be found on Zenodo: https://zenodo.org/badge/D
     - iceFigBarPlot.pdf: Figure 8 (comparison of functional connectivity to ice phenology)
     - iceNoObsPlot.pdf: Figure 9 (number of ice observations used in ice phenology calculations)
 
-### File variable descriptions for files included in the data repository
+## File variable descriptions for files included in the data repository
    - ColvilleDataExport_20210210_75pctCloud.csv: Lake reflectance data - from google earth engine script no. 1, also included in data repository
       - ID: Lake ID
       - system_time_start_mean: The time of the observation--values need to be divided by 1000 before hey can be converted to formal dates
