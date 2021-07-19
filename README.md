@@ -2,17 +2,21 @@
 
 ## Scripts
 
-### Data download
+### Data download to google drive
 1. Download RGB data for lakes and channel apex: [https://code.earthengine.google.com/73c33750b9f646df31b761aa50776e9d]
 2. Download lake ice data [https://code.earthengine.google.com/11757ed73298fa104aed9c5d5b86f5b6] - by Xiao Yang
+3. Download of April 2015 and April 2017 lake elevations from ArcticDEM [https://code.earthengine.google.com/73182eaa7b7bf0aa15959dba44bde194]
 
-### Preprocessing
-1. Piliouras R
-2. Piliouras GEE
-3. ice analysis R
+### Pre-processing 
+- Delta lake ice.Rmd
+   - **description**: Using downloaded ice fraction data to model 20-year lake ice phenology
+   - **inputs**:
+      - lakeCoverFraction_1b786b4795b34fa035d55c102cc305e7.csv: Output from step 2 of data download. 
+   - **outputs**:
+      - lake_ice_modeled_duration_colville_delta_20210304.RData: Modeled lake ice phenology from Landsat 
+      - NumberOfObsTrans_20210304.RData: number of ice observations from Landsat for each lake within both the breakup and freeze-up periods
 
 ### Main data processing -- all input files are included in the data repository.
-#### R scripts --descriptions of each script. 
 - 1_ColvilleDeltaClassification_updateJuly2021.Rmd
   - **Description**: Intakes lake and channel reflectance data and classifies lakes as high functional connectivity vs low functional connectivity within multiple time periods	
   - **input files**
@@ -30,11 +34,12 @@
     - Colville_Classified_data_20210303: The results of the functional connectivity classification for each lake within each time period
     - ColvilleShapefilesEdited.shp: The lake polygon shapefiles
     - colvilleValidation20200508.csv: Connectivity validation data from GECI imagery
-    - colville1992Classification.csv: Connectivity validation data from Jorgenson et al. (1997) -----------------******
-    - PilouriasColvilleClassCompareNegBuf_20200520_good.shp: Connectivity validation data from Piliouras and Rowland (2020) *****
-    - AprilLakeElev20152017.csv: Mean April lake elevation in 2015 and 2017 from ArcticDEM strip data. -----------******
-    - lake_ice_modeled_duration_colville_delta_20210304.RData: Modeled lake ice phenology from Landsat -------------*****
-    - NumberOfObsTrans_20210304.RData: number of ice observations from Landsat for each lake within both the breakup and freeze-up periods -------------******
+    - colville1992Classification.csv: Connectivity validation data from Jorgenson et al. (1997)
+    - PilouriasColvilleClassCompareNegBuf_20200520_good.shp: Connectivity validation data from Piliouras and Rowland (2020) 
+    - AprilLakeElev20152017.csv: Mean April lake elevation in 2015 and 2017 from ArcticDEM strip data
+    - lake_ice_modeled_duration_colville_delta_20210304.RData: Modeled lake ice phenology from Landsat 
+    - NumberOfObsTrans_20210304.RData: number of ice observations from Landsat for each lake within both the breakup and freeze-up periods
+    - 150_Alaska_nolakes_widths.shp: Alaskan rivers from the GRWL Summary Statistics database (Allen & Pavelsky, 2018) that are wider than 150m.
   - **output files**
     - alaskaMap.pdf: Figure 1 part 1 (map of Alaska)
     - deltaMap.pdf: Figure 1 part 2 (map of the Colville Delta)
@@ -114,3 +119,13 @@
         - ID: Lake ID
         - count_bu: number of ice observations used during the modeled breakup period
         - count_fu: number of ice observations used during the modeled freeze-up period
+   - 150_Alaska_nolakes_widths.shp: Alaskan rivers from the GRWL Summary Statistics database (Allen & Pavelsky, 2018) that are wider than 150m.
+        - Join_Count: number of point grwl observations contained in the summary grwl reach. 
+        - id: Reach ID (not the same as GRWL reach IDs)
+        - nchan: number of channels in the reach
+        - lakeFlag: whether or not the channel is flagged as a lake (should always be 0, which corresponds to not a lake)
+        - elevm: lake elevation (m)
+        - widthm: mean reach width (m)
+        - width_sd: standard deviation in reach width (m)
+        - width_num: same as widthm
+        - geometry: reach polyline geometry
