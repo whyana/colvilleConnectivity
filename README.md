@@ -1,6 +1,6 @@
 # colvilleConnectivity
 
-These scripts and data correspond to a manuscript currently under review. 
+These scripts and data are public for a manuscript currently under review. 
 
 ## Data files
 
