@@ -7,7 +7,7 @@
 2. Download lake ice data [https://code.earthengine.google.com/11757ed73298fa104aed9c5d5b86f5b6] - by Xiao Yang
 3. Download of April 2015 and April 2017 lake elevations from ArcticDEM [https://code.earthengine.google.com/73182eaa7b7bf0aa15959dba44bde194]
 
-### Pre-processing 
+### Pre-processing -- input files are included in data repository
 - Delta lake ice.Rmd - By Xiao Yang, some edits by Wayana Dolan
    - **description**: Using downloaded ice fraction data to model 20-year lake ice phenology
    - **inputs**:
@@ -129,3 +129,15 @@
         - width_sd: standard deviation in reach width (m)
         - width_num: same as widthm
         - geometry: reach polyline geometry
+    - lakeCoverFraction_1b786b4795b34fa035d55c102cc305e7.csv: Output from step 2 of data download of raw lake ice fraction data
+        - ID: Lake ID
+        - snowIce: Like ice fraction calculated using Landsat Fmask (fraction, 0-1)
+        - SLIDE_snowIce: Lake ice fraction calculated using the new SLIDE method from Yang et al. (2021) (fractio, 0-1)
+        - cloud: Lake cloud fraction (fraction 0-1)
+        - water: Lake water fraction (fraction, 0-1)
+        - clear: Lake clear sky/land fraction (fraction, 0-1)
+        - delta: Name of delta--should always be "colville"
+        - CLOUD_COVER: Landsat scene total cloudcover (percent, 0-100)
+        - system:time_start: time of observation (needs to be divided by 1000 to be converted to a date)
+        - doy: day of year 
+        - LANDSAT_SCENE_ID: Landsat scene ID
