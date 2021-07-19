@@ -132,7 +132,7 @@
    - lakeCoverFraction_1b786b4795b34fa035d55c102cc305e7.csv: Output from step 2 of data download of raw lake ice fraction data
         - ID: Lake ID
         - snowIce: Like ice fraction calculated using Landsat Fmask (fraction, 0-1)
-        - SLIDE_snowIce: Lake ice fraction calculated using the new SLIDE method from Yang et al. (2021) (fractio, 0-1)
+        - SLIDE_snowIce: Lake ice fraction calculated using the new SLIDE method from Yang et al. (2021) (fraction, 0-1)
         - cloud: Lake cloud fraction (fraction 0-1)
         - water: Lake water fraction (fraction, 0-1)
         - clear: Lake clear sky/land fraction (fraction, 0-1)
