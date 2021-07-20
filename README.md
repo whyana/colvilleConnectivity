@@ -13,7 +13,7 @@ All datafiles mentioned below can be found on Zenodo: http://doi.org/10.5281/zen
 2. Download lake ice data [https://code.earthengine.google.com/11757ed73298fa104aed9c5d5b86f5b6] - by Xiao Yang
 3. Download of April 2015 and April 2017 lake elevations from ArcticDEM [https://code.earthengine.google.com/73182eaa7b7bf0aa15959dba44bde194]
 
-### Pre-processing -- input files are included in data repository
+### Pre-processing -- input and output files are included in data repository
 - Delta lake ice.Rmd - By Xiao Yang, some edits by Wayana Dolan
    - **description**: Using downloaded ice fraction data to model 20-year lake ice phenology
    - **inputs**:
@@ -22,7 +22,7 @@ All datafiles mentioned below can be found on Zenodo: http://doi.org/10.5281/zen
       - lake_ice_modeled_duration_colville_delta_20210304.RData: Modeled lake ice phenology from Landsat 
       - NumberOfObsTrans_20210304.RData: number of ice observations from Landsat for each lake within both the breakup and freeze-up periods
 
-### Main data processing -- all input files are included in the data repository.
+### Main data processing -- all input files are included in the data repository as are all output files, excluding figure pdfs.
 - 1_ColvilleDeltaClassification_updateJuly2021.Rmd
   - **Description**: Intakes lake and channel reflectance data and classifies lakes as high functional connectivity vs low functional connectivity within multiple time periods	
   - **input files**
