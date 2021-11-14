@@ -9,7 +9,7 @@ All datafiles mentioned below can be found on Zenodo: http://doi.org/10.5281/zen
 ## Scripts
 
 ### Data download to google drive
-1. Download RGB data for lakes and channel apex: [https://code.earthengine.google.com/73c33750b9f646df31b761aa50776e9d]
+1. Download RGB data for lakes and nearby channels: [https://code.earthengine.google.com/66cc087785402ba82d27d49c648a3808]
 2. Download lake ice data [https://code.earthengine.google.com/11757ed73298fa104aed9c5d5b86f5b6] - by Xiao Yang
 3. Download of April 2015 and April 2017 lake elevations from ArcticDEM [https://code.earthengine.google.com/73182eaa7b7bf0aa15959dba44bde194]
 
