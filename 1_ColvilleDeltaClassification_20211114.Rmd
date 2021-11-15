@@ -1,0 +1,1188 @@
+---
+title: "1_ColvilleDeltaConnectivityAnalysis_classGeneration"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Libraries
+```{r}
+library(tidyverse)
+library(sf)
+library(lubridate)
+library(grDevices)
+library(mapview)
+library(extrafont)
+library(ggpubr)
+library(ggmap)
+library(RgoogleMaps)
+library(broom)
+library(HistDAWass)
+library(dataRetrieval) # only used for discharge section
+library(RgoogleMaps)
+library(sp)
+library(data.table)
+#Import libraries for rf and dt
+library(caret) 
+library(e1071)
+library(Boruta)
+library(tidymodels)
+library(skimr)
+library(Boruta)
+```
+
+# Functions
+```{r}
+#takes RGB to calculate dominant wavelength
+chroma <- function(R, G, B) {  
+  require(colorscience)
+
+# Convert R,G, and B spectral reflectance to dominant wavelength #based
+# on CIE chromaticity color space
+
+# see Wang et al 2015. MODIS-Based Radiometric Color Extraction and
+# Classification of Inland Water With the Forel-Ule
+# Scale: A Case Study of Lake Taihu
+
+# chromaticity.diagram.color.fill()
+Xi <- 2.7689*R + 1.7517*G + 1.1302*B
+Yi <- 1.0000*R + 4.5907*G + 0.0601*B
+Zi <- 0.0565*G + 5.5943*B
+
+# calculate coordinates on chromaticity diagram
+x <-  Xi / (Xi + Yi +  Zi)
+y <-  Yi / (Xi + Yi +  Zi)
+z <-  Zi / (Xi + Yi +  Zi)
+
+# calculate hue angle
+alpha <- atan2( (x - (1/3)), (y - (1/3))) * 180/pi
+
+# make look up table for hue angle to wavelength conversion
+cie <- cccie31 %>%
+  dplyr::mutate(a = atan2( (x - (1/3)), (y - (1/3))) * 180/pi) %>%
+  dplyr::filter(wlnm <= 700) %>%
+  dplyr::filter(wlnm >=380) 
+
+# find nearest dominant wavelength to hue angle
+wl <- cie[as.vector(sapply(alpha,function(x) which.min(abs(x - cie$a)))), 'wlnm']
+
+return(wl)
+}
+```
+
+# Imports and file paths
+```{r}
+# Names of files and folders for reflectance data
+import.filePath = "E:/Research/DeltaicConnectivity/ColvilleDelta/Data/DataDownloads/Downloads_20211021"
+import.Lakes = "ColvilleLakeExport_20211022.csv"
+###Will import channels using a list.files()command
+
+#Name of file and folder for classification export
+export.filePath = "E:/Research/DeltaicConnectivity/ColvilleDelta/Data/Outputs"
+export.fileName.dt = "colville_dt_20211022"
+export.fileName.rf = "colville_rf_20211022"
+export.fileName.pct = "colville_pct_20211022"
+export.fileName.km = "colville_km_20211022"
+
+
+
+#Name of file and folder for lake shapefiles
+shapeFiles.filePath = "E:/Research/DeltaicConnectivity/ColvilleDelta/Data/Shapefiles"
+lakes.shapeFile = "ColvilleShapefilesEdited.shp"
+setwd(shapeFiles.filePath)
+lakes.sf = st_read(lakes.shapeFile)
+
+
+# Name of file and folder for GECI validation data
+valFile.path="E:/Research/DeltaicConnectivity/ColvilleDelta/Data/DataDownloads"
+valFileName = "colvilleValidation20200508.csv"
+
+# Name of file and folder for figures
+figures.filePath = "C:/Users/whyana/OneDrive - University of North Carolina at Chapel Hill/DocumentsLaptop/001_ Graduate School/Research/Papers/ColvilleDeltaConnectivity/Figures/Figures_raw"
+dens.figure.name = "densityPlotExample.pdf"
+tree.figure.name = "DecisionTreeFigure.pdf"
+
+```
+
+# Rank the discharge years during 2003-2019 period
+```{r}
+siteNumber="15875000" #ID number for the USGS gage at Umiat, AK
+ColvilleInfo <- readNWISsite(siteNumber)
+parameterCd <- "00060"
+# Download daily discharge data and convert it into a yearly summer discharge time series
+yearlySummerSummary <- readNWISdv(siteNumber,parameterCd,
+                      "2000-01-01","2019-12-31") %>% 
+  mutate(date = as_date(Date),
+         month = month(date),
+         doy = yday(date),
+         year=year(date)) %>% as_tibble() %>% rename(discharge = X_00060_00003) %>% 
+  mutate(time_period = case_when(
+      year<2005 ~ "2000-2004",
+      year>=2005 & year < 2010 ~ "2005-2009",
+      year >= 2010 & year <2015 ~ "2010-2014",
+      year >=2015 ~ "2015-2019"
+    )) %>%   filter(month>=6 & month <=9) %>% group_by(year) %>% 
+  summarise(mean_discharge=mean(discharge),
+            total_discharge=sum(discharge), 
+            max_discharge = max(discharge)) %>% ungroup()%>%  
+  filter(year!=2002) %>%  # remove 2002 because we don't have data from that year in June
+  mutate(max_discharge = max_discharge*0.028316847)#convert cfs to cms
+
+
+
+# Rank all the discharge years and group by increasing discharge
+summerOrder.df=yearlySummerSummary %>% arrange(max_discharge) %>% mutate(dischargeGroup = c(rep(1,4), rep(2,4), rep(3,4), rep(4,5)))
+
+# Plot all the discharge data in a table.
+library(kableExtra)
+summerOrder.tablePrep = summerOrder.df %>% select(year, max_discharge) %>% mutate_if(is.numeric, format, digits=4)
+colnames(summerOrder.tablePrep)=c("year", "Maximum summer discharge (cms)")
+kbl(summerOrder.tablePrep, align="c") %>% 
+  kable_classic(full_width=F, html_font = "Times New Roman") %>% 
+  pack_rows("Group 1", start_row=1,end_row=4, background="#EFEFEF") %>% 
+  pack_rows("Group 2", start_row=5,end_row=8, background="#EFEFEF") %>% 
+  pack_rows("Group 3", 9, 12, background="#EFEFEF") %>% 
+  pack_rows("Group 4", 13,17, background="#EFEFEF") %>% 
+  column_spec(2, width = "10em")
+
+# (not used in paper) Also, look at date of maximum spring discharge through time
+summerMaxDate <- readNWISdv(siteNumber,parameterCd,
+                      "2000-01-01","2019-12-31") %>% 
+  mutate(date = as_date(Date),
+         month = month(date),
+         doy = yday(date),
+         year=year(date)) %>% as_tibble() %>% rename(discharge = X_00060_00003) %>% 
+  filter(month>=5 & month <=7) %>% group_by(year) %>% 
+  summarise(max_discharge = max(discharge),
+            max_doy=doy[which.max(discharge)]) %>% ungroup()%>%  
+  filter(year!=2002) %>%  # remove 2002 because we don't have data from that year in June
+  mutate(max_discharge = max_discharge*0.028316847)#convert cfs to cms
+
+ggplot(summerMaxDate)+geom_line(aes(x=year, y=max_doy))+geom_point(aes(x=year, y=max_doy))+
+  geom_hline(aes(yintercept=152))+theme_bw()+ylab("max discharge day of year (May-July)")
+
+```
+
+# Import and filter the lake and channel data  - calculates both for mean, tenth percentile and 90% dom wv values.
+```{r}
+setwd(import.filePath)
+#import lake data
+all.lakes = read.csv(import.Lakes) %>% dplyr::as_tibble()
+#import all lake buffer/channel file
+all.files = list.files()
+channel.files=all.files[all.files!=import.Lakes]
+all.channels = channel.files %>% 
+  map_df(~fread(.)) %>% as_tibble()
+
+# Filter lake and channel data
+lakes.filter = all.lakes %>% 
+  mutate(dateTime = as_datetime(system.time_start_mean*0.001),
+         date = as_date(dateTime)) %>% 
+  select(-system.time_start_mean, -count) %>% 
+  filter(Red_count >= 100)  # each observation must be made up of at least 100 good cloud-free pixels
+channels.filter = all.channels %>% 
+  filter(Red_count>=1) %>%#  filter out non-zero days---other filtering will be done after the join
+  mutate(dateTime = as_datetime(`system:time_start_mean`*0.001),
+         date=as_date(dateTime)) %>% 
+  select(-`system:time_start_mean`)
+
+# Calculate dominant wavelength for lake and channel observations
+## Lakes
+# mean
+m_lake_r = lakes.filter$Red_mean/1000
+m_lake_g = lakes.filter$Green_mean/1000
+m_lake_b = lakes.filter$Blue_mean/1000
+dom_wv_lake_m = chroma(m_lake_r,m_lake_g,m_lake_b)
+#p 10
+p10_lake_r = lakes.filter$Red_p10/1000
+p10_lake_g = lakes.filter$Green_p10/1000
+p10_lake_b = lakes.filter$Blue_p10/1000
+dom_wv_lake_p10 = chroma(p10_lake_r,p10_lake_g,p10_lake_b)
+#p90
+p90_lake_r = lakes.filter$Red_p90/1000
+p90_lake_g = lakes.filter$Green_p90/1000
+p90_lake_b = lakes.filter$Blue_p90/1000
+dom_wv_lake_p90 = chroma(p90_lake_r,p90_lake_g,p90_lake_b)
+
+lakes.combo = cbind.data.frame(lakes.filter, dom_wv_lake_m, dom_wv_lake_p10, dom_wv_lake_p90) %>% as_tibble() 
+## Channel
+#mean
+m_channel_r = channels.filter$Red_mean/1000
+m_channel_g = channels.filter$Green_mean/1000
+m_channel_b = channels.filter$Blue_mean/1000
+dom_wv_chan_m = chroma(m_channel_r,m_channel_g,m_channel_b)
+# p10
+p10_channel_r = channels.filter$Red_p10/1000
+p10_channel_g = channels.filter$Green_p10/1000
+p10_channel_b = channels.filter$Blue_p10/1000
+dom_wv_chan_p10 = chroma(p10_channel_r,p10_channel_g,p10_channel_b)
+#p90
+p90_channel_r = channels.filter$Red_p90/1000
+p90_channel_g = channels.filter$Green_p90/1000
+p90_channel_b = channels.filter$Blue_p90/1000
+dom_wv_chan_p90 = chroma(p90_channel_r,p90_channel_g,p90_channel_b)
+
+channels.combo = cbind.data.frame(channels.filter, dom_wv_chan_m, dom_wv_chan_p10, dom_wv_chan_p90) %>% as_tibble() %>% 
+  rename(Blue_chan_m = Blue_mean,Blue_chan_p10 = Blue_p10,Blue_chan_p90 = Blue_p90 ,
+                 Gb_chan_m = Gb_ratio_mean, Gb_chan_p10 = Gb_ratio_p10,Gb_chan_p90 = Gb_ratio_p90,
+                 Green_chan_m=Green_mean,Green_chan_p10=Green_p10,Green_chan_p90=Green_p90, 
+                 Ndssi_chan_m=Ndssi_mean,Ndssi_chan_p10=Ndssi_p10, Ndssi_chan_p90=Ndssi_p90, 
+                 Nsmi_chan_m=Nsmi_mean,Nsmi_chan_p10=Nsmi_p10, Nsmi_chan_p90=Nsmi_p90,
+                 Red_chan_m=Red_mean, Red_chan_p10=Red_p10, Red_chan_p90=Red_p90, count_chan= Red_count) 
+
+# Join lake and channel data from the same date and calculate the dominant wavelength ratio
+joined.df =lakes.combo %>% full_join(channels.combo, by=c("ID", "date")) %>% group_by(ID, date) %>% nest()
+
+bestBuffer = function(df){
+  df.sort = df %>% arrange(buffer) %>% filter(count_chan>200) 
+  df.length= length(df.sort$count_chan)
+  if (df.length==0){bestBuff=0}else{
+    df.final = df.sort %>% first()
+    bestBuff=df.final$buffer
+  }
+  return(bestBuff)
+}
+# for each lake on each date keep the smallest buffer w/ at least 200 pixels
+filter.df = joined.df %>% mutate(selectedBuffer = map_dbl(data, bestBuffer)) %>% 
+  unnest(data) %>% ungroup(ID, date) %>% 
+  filter(buffer==selectedBuffer)
+# calculate ratios
+channels.lakes = filter.df %>%ungroup() %>% 
+  mutate(dom_wv_ratio_m = dom_wv_lake_m/dom_wv_chan_m,
+         dom_wv_ratio_p10 =dom_wv_lake_p10/dom_wv_chan_p10,
+         dom_wv_ratio_p90 =dom_wv_lake_p90/dom_wv_chan_p90,
+         G_ratio_m = Green_mean/Green_chan_m, 
+         B_ratio_m = Blue_mean/Blue_chan_m,
+         R_ratio_m = Red_mean/Red_chan_m,
+         Gb_ratio_m = Gb_ratio_mean/Gb_chan_m,
+         Ndssi_ratio_m = Ndssi_mean/Ndssi_chan_m,
+         Nsmi_ratio_m =Nsmi_mean/Nsmi_chan_m,
+         lci_m = (dom_wv_chan_m-dom_wv_lake_m)/(dom_wv_chan_m+dom_wv_lake_m)) %>% 
+  filter(!is.na(dom_wv_ratio_m)) %>%  #Doesn't matter which joined variable you use here--just filtering those that don't have a match
+  select(-dateTime.x, -dateTime.y) %>% 
+  mutate(year=year(date))
+
+```
+
+# Prep data for multiple types of classifications
+```{r}
+# Add columns for each time period 
+channels.lakes.AddCategories = channels.lakes %>% mutate(
+  time_period=  case_when(
+    year<2005 ~ "2000-2004",
+    year>=2005 & year < 2010 ~ "2005-2009",
+    year >= 2010 & year <2015 ~ "2010-2014",
+    year >=2015 ~ "2015-2019"
+  ),
+  valYear = ifelse((year>=2013 & year<=2016), "yes", "no")) %>% 
+  left_join(summerOrder.df %>% select(year, dischargeGroup), by=c("year"))
+
+
+# Split into time period, validation, and time period groups
+goodLakes.time = channels.lakes.AddCategories %>% 
+  group_by(delta, ID, time_period) %>% summarise(no_obs = n()) %>% 
+  spread(time_period, no_obs) %>%
+  filter(`2000-2004`>10 & `2005-2009`>10 & `2010-2014`>10 & `2015-2019`>10) 
+goodLakes.time.ids = goodLakes.time$ID
+
+
+goodLakes.val = channels.lakes.AddCategories %>% filter(valYear=="yes") %>% 
+  group_by(delta, ID) %>% summarise(no_obs = n()) %>% filter(no_obs>10)
+goodLakes.val.ids = goodLakes.val$ID
+
+
+goodLakes.discharge = channels.lakes.AddCategories %>% filter(!is.na(dischargeGroup)) %>% 
+  group_by(delta, ID, dischargeGroup) %>% summarise(no_obs = n()) %>% 
+  spread(dischargeGroup, no_obs) %>%
+ # filter(`high discharge`>10 & `low discharge`>10) 
+  filter(`1`>10 & `2`>10&`3`>10 &`4`>10)
+goodLakes.discharge.ids = goodLakes.discharge$ID
+
+# Make a dataframe of all of the data - grouped in how it will be classified using kmeans
+time.nest = channels.lakes.AddCategories %>% filter(ID %in% goodLakes.time.ids) %>% 
+  group_by(ID, time_period) %>% nest()
+val.nest = channels.lakes.AddCategories %>% filter(valYear=="yes" & ID %in% goodLakes.val.ids) %>%select(-time_period) %>% 
+  group_by(ID) %>% nest() %>% mutate(time_period="validation")
+dis.nest = channels.lakes.AddCategories %>% filter(!is.na(dischargeGroup) & ID %in% goodLakes.discharge.ids)%>% select(-time_period) %>% 
+  group_by(ID, dischargeGroup) %>% nest() %>%  rename(time_period = dischargeGroup)
+
+all.nest = rbind.data.frame(time.nest, val.nest, dis.nest)
+
+
+
+#FFor each lake in each time period, calculate the median, sdev, and kurtosis for each possible band combination. Filter to just the data in the GECI validation period, and remove lakes who's connectivvity was classified as unclear in the GECI dataset. 
+set.seed(1)
+prep= all.nest %>% tidyr::unnest(data) %>% dplyr::ungroup() %>% 
+  dplyr::group_by(ID, time_period) %>% 
+  dplyr::summarise(med_dw_rat_m = median(dom_wv_ratio_m),
+            sdev_dw_rat_m = sd(dom_wv_ratio_m),
+            kurt_dw_rat_m = kurtosis(dom_wv_ratio_m),
+           med_R_ratio_m = median(R_ratio_m),
+           sdev_R_ratio_m = sd(R_ratio_m),
+           kurt_R_ratio_m = kurtosis(R_ratio_m),
+           med_B_ratio_m = median(R_ratio_m),
+           sdev_B_ratio_m = sd(R_ratio_m),
+           kurt_B_ratio_m = kurtosis(R_ratio_m),
+           med_G_ratio_m = median(R_ratio_m),
+           sdev_G_ratio_m = sd(R_ratio_m),
+           kurt_G_ratio_m = kurtosis(R_ratio_m),
+           med_Gb_ratio_m = median(Gb_ratio_m),
+           sdev_Gb_ratio_m = sd(Gb_ratio_m),
+           kurt_Gb_ratio_m = kurtosis(Gb_ratio_m),
+           med_Ndssi_ratio_m = median(Ndssi_ratio_m),
+           sdev_Ndssi_ratio_m = sd(Ndssi_ratio_m),
+           kurt_Ndssi_ratio_m = kurtosis(Ndssi_ratio_m),
+           med_Nsmi_ratio_m = median(Nsmi_ratio_m),
+           sdev_Nsmi_ratio_m = sd(Nsmi_ratio_m),
+           kurt_Nsmi_ratio_m = kurtosis(Nsmi_ratio_m)) %>% ungroup() 
+
+# also plot the correlation between NSMI and dominant wavelenth
+mat=prep %>% filter(time_period=="validation") %>% 
+  select(med_dw_rat_m,sdev_dw_rat_m, med_Nsmi_ratio_m, sdev_Nsmi_ratio_m,
+         med_Gb_ratio_m, sdev_Gb_ratio_m) %>% filter(sdev_Gb_ratio_m<0.4) %>% 
+  rename("med dw ratio"="med_dw_rat_m",
+         "sdev dw ratio"="sdev_dw_rat_m",
+         "med NSMI ratio"="med_Nsmi_ratio_m",
+         "sdev NSMI ratio"="sdev_Nsmi_ratio_m",
+         "med G/B ratio"="med_Gb_ratio_m",
+         "sdev G/B ratio"="sdev_Gb_ratio_m")
+pairs(mat)
+
+```
+
+# Figure 2c. and d. for paper of example distributions
+```{r}
+# Plot figure
+all.nest %>% ungroup() %>% dplyr::filter(ID=="2989039_2" | ID=="2926574") %>% 
+  dplyr::filter(time_period=="2000-2004") %>% unnest(cols=data) %>% 
+  select(ID,Gb_ratio_m, Nsmi_ratio_m ) %>% 
+  mutate(name = ifelse(ID=="2926574", "Lake B - not connected", "Lake A - connected")) %>% select(-ID) %>% 
+  gather(type, value, -name) %>% 
+  mutate(type = ifelse(type=="Gb_ratio_m", "green over blue ratio", "NSMI ratio")) %>% 
+  ggplot()+geom_density(aes(x=value, color=type))+facet_wrap(~name, nrow=2)+
+  theme_bw()+xlab("ratio value")+
+  theme(legend.title = element_blank(),
+        axis.text = element_text(size=10),
+        strip.text = element_text(size=10),
+        legend.position="top")
+# calculate number of observations for each lake
+all.nest %>% ungroup() %>% dplyr::filter(ID=="2989039_2" | ID=="2926574") %>% 
+  dplyr::filter(time_period=="2000-2004") %>% unnest(cols=data) %>% group_by(ID) %>% count()
+```
+
+
+# Supervised classification - Decision tree ***this is the one we decide to use for the final analysis***, includes code for Figure 3 in the final manuscript.
+```{r}
+# Import GECI validation data for training/testing
+setwd(valFile.path)
+lake.class = read.csv(valFileName , stringsAsFactors = F) %>% as_tibble() %>% 
+  rename(validation=Connected) %>% select(-Row.Number, -note)
+
+# Now, use Boruta, see below, to figure out which variables are important
+#https://www.datacamp.com/community/tutorials/feature-selection-R-boruta
+set.seed(90)
+trainData <- prep %>% dplyr::filter(time_period=="validation") %>% left_join(lake.class, by="ID") %>% 
+  dplyr::filter(!is.na(validation) & validation!="m") %>% 
+  mutate(classes=as.factor(ifelse(validation=="n", "not connected", "connected"))) %>% dplyr::select(-validation) %>% ungroup() %>% dplyr::select(-ID, -time_period)
+## remove unnecessary columns using Boruta
+attach(trainData)
+colnames(trainData)
+## apply the boruta
+boruta.train <- Boruta(classes~., data = trainData,
+                       mcAdj = TRUE, pValue = 0.01,doTrace = 2,ntree = 50)
+# print the results of the boruta
+print(boruta.train)
+boruta.train$finalDecision
+# plot the results of the boruta
+plot(boruta.train, colCode=c("lightgreen", "yellow", "red", "blue"),
+     cex.axis=.7, las=2, xlab="",sort=TRUE, main="") 
+## Get rid of tentative (yellow on the plot)
+boruta.bank=TentativeRoughFix(boruta.train)
+plot(boruta.bank, colCode=c("lightgreen", "yellow", "red", "blue"),
+     cex.axis=.7, las=2, xlab="",sort=TRUE, main="") 
+
+#Select the variables to use during the classification
+important.cols=getSelectedAttributes(boruta.bank, withTentative = F) 
+bank_df <- attStats(boruta.bank)
+print(bank_df) #visualize variable importance
+
+
+###Create a decision tree! Tutorial here: https://www.gmudatamining.com/lesson-13-r-tutorial.html
+set.seed(123)
+geci.val = prep %>% filter(time_period=="validation") %>% left_join(lake.class, by="ID") %>% 
+  filter(!is.na(validation) & validation!="m") %>% 
+  mutate(classes=as.factor(ifelse(validation=="n", "not connected", "connected"))) %>% dplyr::select(-validation) %>% ungroup() %>% dplyr::select(c("ID","classes", all_of(important.cols))) %>% 
+  mutate_if(is.character, factor) #turn all characters in to factors
+#look at the data to make sure it is as expected
+skimr::skim(geci.val)
+
+# split data into test and train
+set.seed(234)
+geci.split = initial_split(geci.val, strata=classes)
+geci.train = training(geci.split)
+geci.test = testing(geci.split)
+
+
+pairs(geci.train %>% 
+        select(med_Nsmi_ratio_m, sdev_Nsmi_ratio_m, med_Gb_ratio_m, sdev_Gb_ratio_m, med_dw_rat_m, sdev_dw_rat_m) %>% filter(sdev_Gb_ratio_m<0.5),
+      upper.panel = NULL)
+
+# Prepare data for later 5-fold cross validation
+geci.folds5 = vfold_cv(geci.train, v=5, strata = classes)
+# get the recipe setup for pre-processing
+geci.recipe = recipe(classes~., data=geci.train) %>% 
+   update_role(ID, new_role = "ID")  ###########################Maybe exclude the ID instead of updating the role, then adding it later
+geci.recipe %>% prep() %>% bake(new_data=geci.train)#print the training data
+# Set up the model and what parameters we want to tune
+tree_model = decision_tree(cost_complexity=tune(),
+                           tree_depth=tune(),
+                           min_n=tune()) %>% 
+  set_engine("rpart") %>% 
+  set_mode("classification")
+# setup the workflow with both the model and the preprocessing recipe
+tree_workflow=workflow() %>% 
+  add_model(tree_model) %>% 
+  add_recipe(geci.recipe)
+
+# Hyperparameter tuning
+set.seed(345)
+##Build a grid of parameter options
+tree_grid = grid_regular(cost_complexity(), 
+                         tree_depth(), 
+                         min_n(), levels=3)
+#tune the grid
+tree_tuning = tree_workflow %>% 
+  tune_grid(resamples = geci.folds5, grid = tree_grid)
+
+## Show the top 5 best models based on roc_auc metric
+tree_tuning %>% collect_metrics() %>% 
+  ggplot()+geom_point(aes(x=min_n, y=mean, color=as.factor(tree_depth), size=cost_complexity), alpha=0.3)+facet_wrap(~.metric)
+##select the best model based on accuracy (it is the same model whether we pick using accuracy or roc_auc)
+best_tree = tree_tuning %>% 
+  select_best(metric="accuracy")
+best_tree
+
+# Finalize workflow with the new tuned parameters
+final_tree_workflow = tree_workflow %>% finalize_workflow(best_tree)
+
+# Fit the model to the training dataset
+set.seed(456)
+tree_wf_fit = final_tree_workflow %>% fit(data=geci.train)
+tree_fit = tree_wf_fit %>% extract_fit_parsnip()#show the  model
+# expore the model
+library(vip)
+vip(tree_fit) #variable importance
+tree.plot =rpart.plot::rpart.plot(tree_fit$fit, roundint=FALSE, type=5, extra=2)
+setwd(figures.filePath)
+ggsave(tree.plot, width=6.5, height=3.14, filename=tree.figure.name)
+# apply the model to the test set
+tree_last_fit = final_tree_workflow %>% last_fit(geci.split)
+tree_last_fit %>% collect_metrics()
+tree_predictions=tree_last_fit %>% collect_predictions()
+conf_mat(tree_predictions, truth = classes, estimate = .pred_class)
+
+confusionMatrix(tree_predictions$.pred_class, tree_predictions$classes)
+
+### This is the fitted model to use on the other datasets
+fitted_wf=pluck(tree_last_fit, 6)[[1]]
+
+# apply the decision tree to all other data and add a column listing which ones were testing and which were training.
+train.ids = geci.train$ID
+test.ids = geci.test$ID
+dt.class =cbind(predict(fitted_wf, prep %>% select(-time_period, ID)), prep) %>% as_tibble() %>% select(ID, time_period, .pred_class) %>% mutate(split=case_when(
+  time_period=="validation" &ID %in% train.ids~"train", 
+  time_period=="validation" &ID %in% test.ids~"test",
+  time_period!="validation"~"neither"))
+
+setwd(export.filePath)
+write_rds(dt.class, export.fileName.dt) # write it to the file
+```
+
+# Supervised classification - Random forest  
+```{r}
+# Import GECI validation data for training/testing
+setwd(valFile.path)
+lake.class = read.csv(valFileName , stringsAsFactors = F) %>% as_tibble() %>% 
+  rename(validation=Connected) %>% select(-Row.Number, -note)
+
+# Now, use Boruta, see below, to figure out which variables are inportant
+#https://www.datacamp.com/community/tutorials/feature-selection-R-boruta
+set.seed(90)
+trainData <- prep %>% filter(time_period=="validation") %>% left_join(lake.class, by="ID") %>% 
+  filter(!is.na(validation) & validation!="m") %>% 
+  mutate(classes=as.factor(ifelse(validation=="n", "not connected", "connected"))) %>% dplyr::select(-validation) %>% ungroup() %>% dplyr::select(-ID, -time_period)
+## remove unnecessary columns for Boruta
+attach(trainData)
+colnames(trainData)
+## apply the boruta
+boruta.train <- Boruta(classes~., data = trainData,
+                       mcAdj = TRUE, pValue = 0.01,doTrace = 2,ntree = 50)
+# print the results of the boruta
+print(boruta.train)
+boruta.train$finalDecision
+# plot the results of the boruta
+plot(boruta.train, colCode=c("lightgreen", "yellow", "red", "blue"),
+     cex.axis=.7, las=2, xlab="",sort=TRUE, main="") 
+## Get rid of tentative (yellow on the plot)
+boruta.bank=TentativeRoughFix(boruta.train)
+plot(boruta.bank, colCode=c("lightgreen", "yellow", "red", "blue"),
+     cex.axis=.7, las=2, xlab="",sort=TRUE, main="") 
+
+#Select the variables to use during the classification
+important.cols=getSelectedAttributes(boruta.bank, withTentative = F) 
+bank_df <- attStats(boruta.bank)
+print(bank_df) #visualize variable importance
+
+# Start Random forest classification
+#Apply random forest classicfication using tidymodels
+## https://juliasilge.com/blog/sf-trees-random-tuning/ 
+
+set.seed(123)
+# get the dataset
+geci.val = prep %>% filter(time_period=="validation") %>% left_join(lake.class, by="ID") %>% 
+  filter(!is.na(validation) & validation!="m") %>% 
+  mutate(classes=as.factor(ifelse(validation=="n", "not connected", "connected"))) %>% 
+  dplyr::select(-validation) %>% ungroup() %>% dplyr::select(c("ID","classes", all_of(important.cols))) %>% 
+  mutate_if(is.character, factor) #turn all characters in to factors
+#look at the data to make sure it is as expected
+skimr::skim(geci.val)
+
+# split data into test and train
+set.seed(234)
+geci.split = initial_split(geci.val, strata=classes)
+geci.train = training(geci.split)
+geci.test = testing(geci.split)
+
+# pre-process
+geci.rec =recipe(classes ~., data=geci.train) %>% 
+  update_role(ID, new_role = "ID") 
+geci.pre=prep(geci.rec)
+geci.juiced = juice(geci.pre)
+geci.juiced %>% count(classes)
+
+#Make model specifications & get ready to tune
+tune.spec = rand_forest(
+  mtry=tune(), #when you are making leaves of the tree, how many do you sample at each split--all predictors or just a few
+  trees = 500,
+  min_n=tune()# How long do you keep splitting. How many datapoints have to be in a node before you stop splitting
+  ) %>% 
+  set_mode("classification") %>% set_engine("ranger") #ranger is just one way of doing random forest
+
+tune.wf=workflow() %>% 
+  add_recipe(geci.rec) %>% 
+  add_model(tune.spec)
+
+# Train hyperparameters with 5-fold cross validation
+set.seed(345)
+geci.fold  = vfold_cv(geci.train, v=5, strata=classes)
+## tune parameters
+#doParallel::registerDoParallel()
+tune.res=tune_grid(
+  tune.wf,
+  resamples=geci.fold,
+  grid=20
+)
+## take a look at parameters
+tune.res %>% collect_metrics() #look at all the metrics
+tune.res %>% select_best("accuracy") #select best accuracy
+tune.res %>% 
+  collect_metrics() %>% 
+  filter(.metric=="roc_auc") %>% 
+  select(mean, min_n, mtry) %>% 
+  pivot_longer(min_n:mtry,
+               values_to="value",
+               names_to="parameter") %>% 
+  ggplot(aes(value, mean, color=parameter))+
+  geom_point(show.legend="FALSE")+
+  facet_wrap(~parameter, scales="free_x")
+
+# Tune again using info from prior tuning
+set.seed(456)
+rf.grid= grid_regular(
+  mtry(range=c(2,9)),
+  min_n(range=c(20,40)),
+  levels = 3
+)
+regular.res=tune_grid(
+  tune.wf,
+  resamples=geci.fold,
+  grid=rf.grid
+)
+##roc_auc
+regular.res %>% 
+  collect_metrics() %>% 
+  filter(.metric=="roc_auc") %>% 
+  mutate(min_n=factor(min_n)) %>% 
+  ggplot(aes(mtry, mean, color=min_n))+geom_point()+geom_line(alpha=0.5, size=1.5)
+##accuracy
+regular.res %>% 
+  collect_metrics() %>% 
+  filter(.metric=="accuracy") %>% 
+  mutate(min_n=factor(min_n)) %>% 
+  ggplot(aes(mtry, mean, color=min_n))+geom_point()+geom_line(alpha=0.5, size=1.5)
+
+
+# select the best option
+best.acc =select_best(regular.res, "roc_auc")
+final.rf=finalize_model(
+  tune.spec,
+  best.acc
+)
+
+# Check out variable importance for the model as a whole
+library(vip)
+final.rf %>% set_engine("ranger", importance="permutation") %>% 
+  fit(classes~.,
+      data = juice(geci.pre) %>% select(-ID)) %>% 
+  vip(geom="point")
+
+# see how the model does on the testing data
+final.wf = workflow() %>% 
+  add_recipe(geci.rec) %>% 
+  add_model(final.rf)
+
+final.res=final.wf %>% last_fit(geci.split)
+final.res %>% collect_metrics()
+final.res %>% collect_predictions() %>% 
+  mutate(correct=case_when(classes==.pred_class~"Correct", TRUE ~"Incorrect")) %>% 
+  bind_cols(geci.test) %>% 
+  ggplot(aes(x=med_Nsmi_ratio_m,y=med_Gb_ratio_m, color=correct))+
+  geom_point(size=3, alpha=0.4)+labs(color=NULL)+scale_color_manual(values=c("gray80", "darkred"))+theme_bw()
+final.pred.rf= final.res %>% collect_predictions()
+conf_mat(final.pred.rf, truth = classes, estimate = .pred_class)
+confusionMatrix(final.pred.rf$.pred_class, final.pred.rf$classes)
+### This is the fitted model to use on the other datasets
+fitted.wf.rf= pluck(final.res, 6)[[1]]
+
+train.ids = geci.train$ID
+test.ids = geci.test$ID
+rf.class = cbind(predict(fitted.wf.rf, prep %>% select(-time_period)), prep) %>% as_tibble() %>% select(ID, time_period, .pred_class)%>% mutate(split=case_when(
+  time_period=="validation" &ID %in% train.ids~"train", 
+  time_period=="validation" &ID %in% test.ids~"test",
+  time_period!="validation"~"neither"))
+setwd(export.filePath)
+write_rds(rf.class, export.fileName.rf)
+```
+
+# pct-based 'supervised' classification
+```{r}
+# select the data corresponing to the validation time period and select the summary attributes related to dominant wavelength
+val.df =prep %>% filter(time_period=="validation") %>% select(ID, time_period,med_dw_rat_m, sdev_dw_rat_m) %>% 
+  left_join(lake.class, by="ID") %>% filter(validation!="m")%>% mutate(classes=ifelse(validation=="n", "not connected", "connected"))
+val.df %>% ggplot()+geom_density(aes(x=med_dw_rat_m, fill=classes), alpha=0.5)
+val.df %>% ggplot()+geom_density(aes(x=sdev_dw_rat_m, fill=classes), alpha=0.5)
+
+#get a list of median and sdev dominant wavelength thesholds to try based on above plot
+list.meds = seq(.90,1.2, 0.01)
+list.sdevs = seq(0.01, 0.07,0.005 )
+
+#split the data into training and testing
+set.seed(234)
+val.split = initial_split(val.df, strata=classes)
+val.train = training(val.split)
+val.test = testing(val.split)
+
+#loop through all threshold combinations and assess accuracy of each run
+analysis.all = NULL
+for (m in list.meds){
+  for (s in list.sdevs){
+    test.df = val.df%>% 
+      mutate(predicted.class = ifelse(med_dw_rat_m > m & sdev_dw_rat_m < s, "connected", "not connected" )) %>% 
+      mutate(predicted.class = factor(predicted.class, levels = c("not connected", "connected")),
+             classes = factor(classes,levels = c("not connected", "connected") ))
+    test.cf = confusionMatrix(test.df$classes, test.df$predicted.class)
+    overall = test.cf$overall[[1]]
+    kappa = test.cf$overall[[2]]
+    analysis.run = cbind(m, s, overall,kappa)
+    analysis.all = rbind.data.frame(analysis.all, analysis.run)
+  }
+}
+analysis.all %>% as_tibble() %>% 
+  mutate(m_s = factor(paste(m, s))) %>% 
+  ggplot(aes(x=m, y=s, color=overall, size=kappa))+geom_point()+scale_color_viridis_b()+
+  theme_bw()+
+  xlab("median threshold")+ylab("sdev threshold")+labs(color="overall accuracy", size="kappa statistic")+
+  ggtitle("GECI validation accuracy, varying thresholds")
+
+### pick the best combo of m and s
+arranged.df=analysis.all %>% as_tibble() %>% arrange(desc(overall))
+best.m = arranged.df$m[1]
+best.s = arranged.df$s[1]
+
+# test the model on the validation data
+test.results = val.test %>%  mutate(.pred_class=ifelse(med_dw_rat_m > best.m & sdev_dw_rat_m < best.s, "connected", "not connected")) %>% mutate_if(is.character, as.factor)
+confusionMatrix(test.results$classes, test.results$.pred_class)
+
+
+val.train.ids = val.train$ID
+val.test.ids = val.test$ID
+pct.class = prep %>% mutate(.pred_class=ifelse(med_dw_rat_m > best.m & sdev_dw_rat_m < best.s, "connected", "not connected")) %>% select(ID, time_period, .pred_class) %>% mutate(split=case_when(
+  time_period=="validation" &ID %in% val.train.ids~"train", 
+  time_period=="validation" &ID %in% val.test.ids~"test",
+  time_period!="validation"~"neither"))
+
+setwd(export.filePath)
+write_rds(pct.class, export.fileName.pct)
+```
+
+# kmeans classification--test for all bands and band combinations
+```{r}
+# Apply the k-means clustering algorithm for all, do versions with G/B ratio, NSMI, and NDssI
+list.bands =c("R_ratio_m", "G_ratio_m", "B_ratio_m","dom_wv_ratio_m", "dom_wv_ratio_p10", "dom_wv_ratio_p90",  "Gb_ratio_m","Ndssi_ratio_m", "Nsmi_ratio_m") 
+nest.len = length(all.nest$ID)
+lod = vector("list",nest.len)
+grouped.data.all = NULL
+for (y in list.bands){
+  for (z in 1:nest.len){
+    dat = all.nest$data[[z]]
+    v1 = pull(dat,y)
+    lod[[z]] = data2hist(v1, type="regular")
+    }
+  myMat = new("MatH", nrows=nest.len, ncols=1, ListOfDist=lod, names.rows=c(1:nest.len), names.cols="density") # Gets mean and standard dev of each density plot
+  clustered.data = WH_kmeans(myMat, k=3, verbose=F, rep=100)
+  class = clustered.data$solution$IDX
+  centers = clustered.data$solution$centers
+  print(centers) # because cluster (may change each run, so need to manually check) has the highest mean and smallest standard dev, it is the high connectivity group, the other two are low connectivity
+  cent1 = centers@M[[1]]@m
+  cent2 = centers@M[[2]]@m
+  cent3 = centers@M[[3]]@m
+  centerMeans = c(cent1, cent2, cent3)
+  highestMean.index = which.max(centerMeans)
+  grouped.data = cbind(all.nest,class )%>% as_tibble() %>% rename(class=`...4`) %>% 
+    mutate(connectivity = ifelse(class==highestMean.index, "high functional connectivity", "low functional connectivity")) %>% 
+    mutate(type=y)
+  grouped.data.all=rbind(grouped.data.all, grouped.data)
+}
+
+km.class = grouped.data.all %>% select(ID, time_period, connectivity, type) %>% 
+  rename(".pred_class"="connectivity")
+setwd(export.filePath)
+write_rds(km.class,export.fileName.km)
+```
+
+
+## Code for response to reviewers ##
+
+# kmeans accuracy assessment for revision document 
+```{r}
+setwd(valFile.path)
+# read in GECI validation data
+lake.class = read.csv(valFileName , stringsAsFactors = F) %>% as_tibble() %>% 
+  rename(validation=Connected) %>% select(-Row.Number, -note)
+# read in all kmeans classifications
+setwd(export.filePath)
+grouped.data.all=read_rds(export.fileName.km)
+grouped.data.analyze=grouped.data.all %>% filter(time_period=="validation") %>% 
+  left_join(lake.class, by="ID") %>% 
+  filter(validation!="m")
+
+
+# Gets the kappa stats etc for each.
+grouped.data.nest= grouped.data.analyze %>% 
+  mutate(validation=case_when(validation=="y"~"high functional connectivity", 
+                              validation=="n"~"low functional connectivity")) %>% group_by(type) %>% nest()
+accuracy.results = NULL
+for (n in 1:length(grouped.data.nest$type)){
+  dat = grouped.data.nest[n,] %>% unnest()
+  type = grouped.data.nest[n,1]
+  conf.matrix = confusionMatrix(factor(dat$.pred_class), factor(dat$validation),
+                                positive = NULL, dnn = c("Prediction", "Reference"))
+  overall.accuracy = conf.matrix$overall[[1]]
+  lower.bound = conf.matrix$overall[[3]]
+  upper.bound = conf.matrix$overall[[4]]
+  kappa.stat=conf.matrix$overall[[2]]
+  p.value = conf.matrix$overall[[6]]
+  results = cbind.data.frame(type, overall.accuracy,lower.bound,
+                             upper.bound, kappa.stat, p.value)
+  accuracy.results=rbind.data.frame(accuracy.results, results)
+}
+accuracy.results %>% 
+  mutate(type = case_when(
+    type=="R_ratio_m"~"red band",
+    type=="G_ratio_m"~"green band",
+    type=="B_ratio_m"~"blue band",
+    type=="dom_wv_ratio_m"~"dominant wavelength",
+    type=="Gb_ratio_m"~"G/B",
+    type=="Ndssi_ratio_m"~"NDSSI",
+    type=="Nsmi_ratio_m"~"NSMI"
+  ))%>% 
+  mutate(type = factor(type,levels=c("red band", "green band", "blue band", 
+                                     "dominant wavelength", "G/B", "NDSSI", "NSMI") )) %>% 
+  filter(!is.na(type)) %>% 
+ggplot()+geom_bar(aes(x=type, y=overall.accuracy), stat="identity")+
+  geom_errorbar(aes(x=type, ymin=lower.bound, ymax=upper.bound), width=0.2)+
+  theme_bw()+ylab("overall accuracy")+xlab("lake-to-channel ratio type")+
+  theme(text=element_text(family="Calibri", size=12),
+        axis.title = element_text(face="bold"),
+        axis.text.x=element_text(angle=45, hjust=1))
+
+```
+
+
+# Check the nearby Kuparuk river for a discharge trend over the study period
+```{r}
+siteNumber="15896000" #ID number for the USGS gage 
+KuparikInfo <- readNWISsite(siteNumber)
+parameterCd <- "00060"
+yearlySummerSummary <- readNWISdv(siteNumber,parameterCd,
+                      "1972-01-01","2019-12-31") %>% 
+  mutate(date = as_date(Date),
+         month = month(date),
+         doy = yday(date),
+         year=year(date)) %>% as_tibble() %>% rename(discharge = X_00060_00003) %>% 
+  group_by(year) %>% filter(month>=6 & month <=9) %>% 
+  summarise(mean_discharge=mean(discharge),
+            total_discharge=sum(discharge), 
+            max_discharge = max(discharge)) %>% ungroup()%>%  # remove 2002 because we don't have data from that year in June
+  mutate(max_discharge = max_discharge*0.028316847)#convert cfs to cms
+
+library(trend)
+data.2000.2019=yearlySummerSummary %>% filter(year>=2000)
+data.1972.2019=yearlySummerSummary 
+sens.slope(data.2000.2019$max_discharge, conf.level = 0.95)
+sens.slope(data.1972.2019$max_discharge, conf.level = 0.95)
+sens.slope(data.2000.2019$mean_discharge, conf.level = 0.95)
+sens.slope(data.1972.2019$mean_discharge, conf.level = 0.95)
+sens.slope(data.2000.2019$total_discharge, conf.level = 0.95)
+sens.slope(data.1972.2019$total_discharge, conf.level = 0.95)
+
+
+# What about trends in date of maximum spring discharge
+siteNumber="15896000" #ID number for the USGS gage at Umiat, AK
+KuparikInfo <- readNWISsite(siteNumber)
+parameterCd <- "00060"
+dailyDischarge <- readNWISdv(siteNumber,parameterCd,
+                      "1972-01-01","2019-12-31") %>% 
+  mutate(date = as_date(Date),
+         month = month(date),
+         doy = yday(date),
+         year=year(date)) %>% as_tibble() %>% rename(discharge = X_00060_00003) %>% 
+  mutate(discharge_cms = discharge*0.028316847) %>% group_by(year) %>% summarise(
+    max_discharge = max(discharge_cms),
+    max_doy = doy[which.max(discharge_cms)]
+  )
+
+
+ggplot(dailyDischarge)+geom_line(aes(x=year,y=max_doy))
+```
+
+
+
+# Look at the channel data on a few very clear days and see the spread
+```{r}
+setwd(chanPix.filePath)
+allChanPix = read.csv(chanPix.fileName) %>% as_tibble() %>% 
+  select(-system.index, -.geo) %>% 
+  mutate(dateTime = as_datetime(system.time_start*0.001),
+         date = as_date(dateTime)) %>% select(-dateTime, -system.time_start)
+
+channels_r = allChanPix$Red/1000
+channels_g = allChanPix$Green/1000
+channels_b = allChanPix$Blue/1000
+dom_wv_channels = chroma(channels_r,channels_g,channels_b)
+allChanPix2 = cbind.data.frame(allChanPix, dom_wv_channels) %>% as_tibble() %>% left_join(channels.combo %>% dplyr::select(dom_wv_chan_m, date), by=c("date"))
+
+allChanPix2 %>% filter(date==as_date("2005-06-15"))%>% ggplot(aes(x=dom_wv_channels))+geom_density()+facet_wrap(~date)+
+  geom_vline(aes(xintercept=dom_wv_chan_m))
+
+d2 = "2019-07-08"
+ggplot()+geom_density(data=allChanPix2, aes(x=dom_wv_channels, group=date), fill="gray80", alpha=0.3)+theme_bw()+
+   geom_density(data=allChanPix2 %>% filter(date==as_date(d2)), aes(x=dom_wv_channels), fill="red",color="red", alpha=0.3, lwd=1)+
+  geom_vline(data=allChanPix2 %>% filter(date==as_date(d2)),aes(xintercept=dom_wv_chan_m), color="orange", lwd=1)+
+   xlim(475,625)
+
+```
+
+
+# Look at the pixel threshold for the piliouras validation
+```{r}
+piliouras.folder="E:/Research/DeltaicConnectivity/Data/Pilioras and Rowland 2019/"
+piliouras_validation_results="PilouriasColvilleClassCompareNegBuf_20200520_good.shp"
+setwd(piliouras.folder)
+pil.val.raw = st_read(piliouras_validation_results) %>% as_tibble() %>% select(-geometry)
+### prep validation for classification
+pil.sf=NULL
+for (i in seq(0,30, 1)){
+  pil.val = pil.val.raw %>% select(ID, count) %>% 
+  mutate(classes.pil= as.factor(ifelse(count <=i, "not connected", "connected"))) %>% select(-count) %>% 
+    count(classes.pil) %>% mutate(pixelsNeeded = i)
+  pil.sf = rbind.data.frame(pil.sf, pil.val)
+}
+pil.sf %>% as_tibble() %>% 
+  ggplot(aes(x=pixelsNeeded, y = n, group=classes.pil, color=classes.pil))+
+  geom_line()+geom_point()+theme_bw()+theme(text=element_text(family="Calibri", size=12),
+                                            axis.title = element_text(face="bold"))+
+  xlab("pixel count threshold")+ylab("number of lakes")+labs(color="connectivity class")
+
+#
+```
+
+
+
+# For revision purposes, justify the 200 pixel threshold used to select which buffer to use for channel pixel selection. This code runs the entire analysis using decision tree classification using different tthresholds ranging between 100 and 1000 pixels and validates the data agains the GECI dataset
+```{r}
+buf = seq(100,1000, 50)
+numberOfLakes=NULL
+finalClass = NULL
+for (t in buf){
+  print(t)
+    bestBuffer = function(df){
+    df.sort = df %>% arrange(buffer) %>% filter(count_chan>t) 
+    df.length= length(df.sort$count_chan)
+    if (df.length==0){bestBuff=0}else{
+      df.final = df.sort %>% first()
+      bestBuff=df.final$buffer
+    }
+    return(bestBuff)
+  }
+  # for each lake on each date keep the smallest buffer w/ at least 200 pixels
+  filter.df = joined.df %>% mutate(selectedBuffer = map_dbl(data, bestBuffer)) %>% 
+    unnest(data) %>% ungroup(ID, date) %>% 
+    filter(buffer==selectedBuffer)
+  # calculate ratios
+  channels.lakes = filter.df %>%ungroup() %>% 
+    mutate(dom_wv_ratio_m = dom_wv_lake_m/dom_wv_chan_m,
+           dom_wv_ratio_p10 =dom_wv_lake_p10/dom_wv_chan_p10,
+           dom_wv_ratio_p90 =dom_wv_lake_p90/dom_wv_chan_p90,
+           G_ratio_m = Green_mean/Green_chan_m, 
+           B_ratio_m = Blue_mean/Blue_chan_m,
+           R_ratio_m = Red_mean/Red_chan_m,
+           Gb_ratio_m = Gb_ratio_mean/Gb_chan_m,
+           Ndssi_ratio_m = Ndssi_mean/Ndssi_chan_m,
+           Nsmi_ratio_m =Nsmi_mean/Nsmi_chan_m,
+           lci_m = (dom_wv_chan_m-dom_wv_lake_m)/(dom_wv_chan_m+dom_wv_lake_m)) %>% 
+    filter(!is.na(dom_wv_ratio_m)) %>%  #Doesn't matter which joined variable you use here--just filtering those that don't have a match
+    select(-dateTime.x, -dateTime.y) %>% 
+    mutate(year=year(date))
+  channels.lakes.AddCategories = channels.lakes %>% mutate(
+  time_period=  case_when(
+    year<2005 ~ "2000-2004",
+    year>=2005 & year < 2010 ~ "2005-2009",
+    year >= 2010 & year <2015 ~ "2010-2014",
+    year >=2015 ~ "2015-2019"
+  ),
+  valYear = ifelse((year>=2013 & year<=2016), "yes", "no")) %>% 
+  left_join(summerOrder.df %>% select(year, dischargeGroup), by=c("year"))
+
+
+  # Split into time period, validation, and time period groups
+  goodLakes.time = channels.lakes.AddCategories %>% 
+    group_by(delta, ID, time_period) %>% summarise(no_obs = n()) %>% 
+    spread(time_period, no_obs) %>%
+    filter(`2000-2004`>10 & `2005-2009`>10 & `2010-2014`>10 & `2015-2019`>10) 
+  goodLakes.time.ids = goodLakes.time$ID
+  
+  
+  
+  goodLakes.val = channels.lakes.AddCategories %>% filter(valYear=="yes") %>% 
+    group_by(delta, ID) %>% summarise(no_obs = n()) %>% filter(no_obs>10)
+  goodLakes.val.ids = goodLakes.val$ID
+  
+  
+  goodLakes.discharge = channels.lakes.AddCategories %>% filter(!is.na(dischargeGroup)) %>% 
+    group_by(delta, ID, dischargeGroup) %>% summarise(no_obs = n()) %>% 
+    spread(dischargeGroup, no_obs) %>%
+   # filter(`high discharge`>10 & `low discharge`>10) 
+    filter(`1`>10 & `2`>10&`3`>10 &`4`>10)
+  goodLakes.discharge.ids = goodLakes.discharge$ID
+  
+  # Make a dataframe of all of the data - grouped in how it will be classified using kmeans
+  time.nest = channels.lakes.AddCategories %>% filter(ID %in% goodLakes.time.ids) %>% 
+    group_by(ID, time_period) %>% nest()
+  val.nest = channels.lakes.AddCategories %>% filter(valYear=="yes" & ID %in% goodLakes.val.ids) %>%select(-time_period) %>% 
+    group_by(ID) %>% nest() %>% mutate(time_period="validation")
+  dis.nest = channels.lakes.AddCategories %>% filter(!is.na(dischargeGroup) & ID %in% goodLakes.discharge.ids)%>% select(-time_period) %>% 
+    group_by(ID, dischargeGroup) %>% nest() %>%  rename(time_period = dischargeGroup)
+  
+  all.nest = rbind.data.frame(time.nest, val.nest, dis.nest)
+  
+  
+  
+  #For each lake in each time period, calculate the median, sdev, and kurtosis for each possible band combination. Filter to just the data in the GECI validation period, and remove lakes who's connectivvity was classified as unclear in the GECI dataset. 
+  set.seed(1)
+  prep= all.nest %>% tidyr::unnest(data) %>% dplyr::ungroup() %>% 
+    dplyr::group_by(ID, time_period) %>% 
+    dplyr::summarise(med_dw_rat_m = median(dom_wv_ratio_m),
+              sdev_dw_rat_m = sd(dom_wv_ratio_m),
+              kurt_dw_rat_m = kurtosis(dom_wv_ratio_m),
+             med_R_ratio_m = median(R_ratio_m),
+             sdev_R_ratio_m = sd(R_ratio_m),
+             kurt_R_ratio_m = kurtosis(R_ratio_m),
+             med_B_ratio_m = median(R_ratio_m),
+             sdev_B_ratio_m = sd(R_ratio_m),
+             kurt_B_ratio_m = kurtosis(R_ratio_m),
+             med_G_ratio_m = median(R_ratio_m),
+             sdev_G_ratio_m = sd(R_ratio_m),
+             kurt_G_ratio_m = kurtosis(R_ratio_m),
+             med_Gb_ratio_m = median(Gb_ratio_m),
+             sdev_Gb_ratio_m = sd(Gb_ratio_m),
+             kurt_Gb_ratio_m = kurtosis(Gb_ratio_m),
+             med_Ndssi_ratio_m = median(Ndssi_ratio_m),
+             sdev_Ndssi_ratio_m = sd(Ndssi_ratio_m),
+             kurt_Ndssi_ratio_m = kurtosis(Ndssi_ratio_m),
+             med_Nsmi_ratio_m = median(Nsmi_ratio_m),
+             sdev_Nsmi_ratio_m = sd(Nsmi_ratio_m),
+             kurt_Nsmi_ratio_m = kurtosis(Nsmi_ratio_m)) %>% ungroup() 
+  numLakes = length(unique(prep$ID))
+  numberOfLakes=rbind(numberOfLakes, numLakes)
+  print("start model")
+  # Import GECI validation data for training/testing
+  setwd(valFile.path)
+  lake.class = read.csv(valFileName , stringsAsFactors = F) %>% as_tibble() %>% 
+    rename(validation=Connected) %>% select(-Row.Number, -note)
+  
+  # Now, use Boruta, see below, to figure out which variables are inportant
+  #https://www.datacamp.com/community/tutorials/feature-selection-R-boruta
+  set.seed(90)
+  trainData <- prep %>% dplyr::filter(time_period=="validation") %>% left_join(lake.class, by="ID") %>% 
+    dplyr::filter(!is.na(validation) & validation!="m") %>% 
+    mutate(classes=as.factor(ifelse(validation=="n", "not connected", "connected"))) %>% dplyr::select(-validation) %>% ungroup() %>% dplyr::select(-ID, -time_period)
+  ## remove unnecessary columns using Boruta
+  attach(trainData)
+  colnames(trainData)
+  ## apply the boruta
+  boruta.train <- Boruta(classes~., data = trainData,
+                         mcAdj = TRUE, pValue = 0.01,doTrace = 2,ntree = 50)
+  # print the results of the boruta
+  print(boruta.train)
+  boruta.train$finalDecision
+  # plot the results of the boruta
+  plot(boruta.train, colCode=c("lightgreen", "yellow", "red", "blue"),
+       cex.axis=.7, las=2, xlab="",sort=TRUE, main="") 
+  ## Get rid of tentative (yellow on the plot)
+  boruta.bank=TentativeRoughFix(boruta.train)
+  plot(boruta.bank, colCode=c("lightgreen", "yellow", "red", "blue"),
+       cex.axis=.7, las=2, xlab="",sort=TRUE, main="") 
+  
+  #Select the variables to use during the classification
+  important.cols=getSelectedAttributes(boruta.bank, withTentative = F) 
+  bank_df <- attStats(boruta.bank)
+  print(bank_df) #visualize variable importance
+  
+  
+  ###Create a decision tree! Tutorial here: https://www.gmudatamining.com/lesson-13-r-tutorial.html
+  set.seed(123)
+  geci.val = prep %>% filter(time_period=="validation") %>% left_join(lake.class, by="ID") %>% 
+    filter(!is.na(validation) & validation!="m") %>% 
+    mutate(classes=as.factor(ifelse(validation=="n", "not connected", "connected"))) %>% dplyr::select(-validation) %>% ungroup() %>% dplyr::select(c("ID","classes", all_of(important.cols))) %>% 
+    mutate_if(is.character, factor) #turn all characters in to factors
+  #look at the data to make sure it is as expected
+  skimr::skim(geci.val)
+  
+  # split data into test and train
+  set.seed(234)
+  geci.split = initial_split(geci.val, strata=classes)
+  geci.train = training(geci.split)
+  geci.test = testing(geci.split)
+  
+  
+  # Prepare data for later 5-fold cross validation
+  geci.folds5 = vfold_cv(geci.train, v=5, strata = classes)
+  # get the recipe setup for pre-processing
+  geci.recipe = recipe(classes~., data=geci.train) %>% 
+     update_role(ID, new_role = "ID")  ###########################Maybe exclude the ID instead of updating the role, then adding it later
+  geci.recipe %>% prep() %>% bake(new_data=geci.train)#print the training data
+  # Set up the model and what parameters we want to tune
+  tree_model = decision_tree(cost_complexity=tune(),
+                             tree_depth=tune(),
+                             min_n=tune()) %>% 
+    set_engine("rpart") %>% 
+    set_mode("classification")
+  # setup the workflow with both the model and the preprocessing recipe
+  tree_workflow=workflow() %>% 
+    add_model(tree_model) %>% 
+    add_recipe(geci.recipe)
+  
+  # Hyperparameter tuning
+  set.seed(345)
+  ##Build a grid of parameter options
+  tree_grid = grid_regular(cost_complexity(), 
+                           tree_depth(), 
+                           min_n(), levels=3)
+  #tune the grid
+  tree_tuning = tree_workflow %>% 
+    tune_grid(resamples = geci.folds5, grid = tree_grid)
+  
+  ## Show the top 5 best models based on roc_auc metric
+  tree_tuning %>% collect_metrics() %>% 
+    ggplot()+geom_point(aes(x=min_n, y=mean, color=as.factor(tree_depth), size=cost_complexity), alpha=0.3)+facet_wrap(~.metric)
+  ##select the best model based on accuracy (it is the same model whether we pick using accuracy or roc_auc)
+  best_tree = tree_tuning %>% 
+    select_best(metric="accuracy")
+  best_tree
+  
+  # Finalize workflow with the new tuned parameters
+  final_tree_workflow = tree_workflow %>% finalize_workflow(best_tree)
+  
+  # Fit the model to the training dataset
+  set.seed(456)
+  tree_wf_fit = final_tree_workflow %>% fit(data=geci.train)
+  tree_fit = tree_wf_fit %>% extract_fit_parsnip()#show the  model
+  # expore the model
+  library(vip)
+  vip(tree_fit) #variable importance
+  rpart.plot::rpart.plot(tree_fit$fit, roundint=FALSE, type=5, extra=2)
+  # apply the model to the test set
+  tree_last_fit = final_tree_workflow %>% last_fit(geci.split)
+  tree_last_fit %>% collect_metrics()
+  tree_predictions=tree_last_fit %>% collect_predictions()
+
+  
+  ### This is the fitted model to use on the other datasets
+  fitted_wf=pluck(tree_last_fit, 6)[[1]]
+  
+  # apply the decision tree to all other data and add a column listing which ones were testing and which were training.
+  train.ids = geci.train$ID
+  test.ids = geci.test$ID
+  dt.class =cbind(predict(fitted_wf, prep %>% select(-time_period, ID)), prep) %>% as_tibble() %>% select(ID, time_period, .pred_class) %>% mutate(split=case_when(
+    time_period=="validation" &ID %in% train.ids~"train", 
+    time_period=="validation" &ID %in% test.ids~"test",
+    time_period!="validation"~"neither")) %>% mutate(buf=t)
+  finalClass=rbind.data.frame(finalClass, dt.class)
+}
+
+
+# Now assess the accuracy for each one. 
+setwd(valFile.path)
+val = read.csv(valFileName, stringsAsFactors= F) %>% as_tibble() %>% 
+  mutate(classes = case_when(
+    Connected=="y"~"connected",
+    Connected=="n"~"not connected",
+    Connected=="m"~"uncertain"
+  )) %>% filter(classes!="uncertain")%>% mutate_if(is.character, as.factor) %>% select(ID, classes) %>% filter(classes!="uncertain")
+
+
+filtered.class =finalClass %>% filter(time_period=="validation") %>% filter(!is.na(split)) %>% 
+  filter(split=="test") %>% 
+  left_join(val, by="ID")%>% 
+  group_by(buf) %>% nest()
+
+final.loop=NULL
+for (g in 1:length(filtered.class$buf)){
+  bufNum = filtered.class$buf[g]
+  test=filtered.class$data[[g]]
+  cm.test =confusionMatrix(test$.pred_class, test$classes,positive = NULL, dnn= c("Prediction", "Reference"))
+  agreement = cm.test$overall[[1]]
+  kappa = cm.test$overall[[2]]
+  final.inter = cbind(bufNum, agreement, kappa)
+  final.loop = rbind.data.frame(final.loop, final.inter)
+}
+final.loop
+ggplot(data=final.loop)+geom_line(aes(x=bufNum, y=agreement))+geom_point(aes(x=bufNum, y=agreement))+theme_bw()+
+  xlab("# of pixels needed to expand the search for channel pixels")+ylim(0.75, 0.90)+
+  theme(axis.title=element_text(family="Calibri", face="bold", size = (12)),
+        axis.text =element_text(family="Calibri",size = (12)),
+        strip.text = element_text(family="Calibri", size=(12), face="bold"),
+        legend.text = element_text(family="Calibri", size=(12)),
+        legend.title=element_blank(),
+        legend.position="bottom",
+        title = element_text(family="Calibri", face="bold", size=12))
+
+
+```
+
