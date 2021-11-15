@@ -81,7 +81,7 @@ All datafiles mentioned below can be found on Zenodo: http://doi.org/10.5281/zen
       - area_m: lake area in m^2
       - count: Total number of pekel 90% occurence water pixels within the lake boundary
       - Red_count: Total number of cloud free pixels included in the mean,p90, p10 values for all color reflectances
-   - ColvilleChannelExport_1km_20211022.csv, ColvilleChannelExport_2km_20211022.csv, ColvilleChannelExport_5km_20211022.csv, ColvilleChannelExport_10km_20211022.csv: Channel reflectance data - from google earth engine script no.1. Includes average reflectance data for each lake on each date within a 1km, 2km, 5km, or 10km buffer
+   - ColvilleChannelExport_1km_20211022.csv, ColvilleChannelExport_2km_20211022.csv, ColvilleChannelExport_5km_20211022.csv, ColvilleChannelExport_10km_20211022.csv: Channel reflectance data from google earth engine script no.1. Includes average reflectance data for each lake on each date within a 1km, 2km, 5km, or 10km buffer
      	- Same as above file, except no ID or delta column, and has one additional column, described below
      	- buffer: distance around the lake to search for channel pixels in kilometers
    - ColvilleShapefilesEdited.shp: The lake polygon shapefiles
@@ -94,25 +94,25 @@ All datafiles mentioned below can be found on Zenodo: http://doi.org/10.5281/zen
         - ID: Lake ID
         - Connected: "y" channel present, "m" uncertain channel presence, "n" no channel presence
         - note: any notes made during analysis
-   - colville_dt_20211022: The results of the functional connectivity classification for each lake within each time period using a decision tree based method
+   - colville_dt_20211022: The results of the functional connectivity classification for each lake within each time period using a decision tree-based method. This is the final classification method used in the final analysis for the paper. RData file. Can be read using read_rds() function in R. 
         - ID: Lake ID
-        - time_period: The time period for the classification
-        - .pred_class: The predicted functional connectivity of the lake within the specified time period
+        - time_period: The time period (string) for the classification including temporal periods (“2000-2004”, “2005-2009”, “2010-2014”, “2015-2019”), discharge periods (“1”, “2”, “3”, “4”), and the GECI validation period 2013-2016 (“validation”) 
+        - .pred_class: The predicted functional connectivity of the lake within the specified time period (“connected” or “not connected”)
         - split: whether or not the lake (during the validation period) was in the training or testing group. If the observation is from outside the validation period, split = "Neither" 
-   - colville_pct_20211022: The results of the functional connectivity classification for each lake within each time period using a percentage-based method
+   - colville_pct_20211022: The results of the functional connectivity classification for each lake within each time period using a percentage-based method. RData file. Can be read using read_rds() function in R. 
         - ID: Lake ID
-        - time_period: The time period for the classification
-        - .pred_class: The predicted functional connectivity of the lake within the specified time period
+        - time_period: The time period (string) for the classification including temporal periods (“2000-2004”, “2005-2009”, “2010-2014”, “2015-2019”), discharge periods (“1”, “2”, “3”, “4”), and the GECI validation period 2013-2016 (“validation”) 
+        - .pred_class: The predicted functional connectivity of the lake within the specified time period (“connected” or “not connected”)
         - split: whether or not the lake (during the validation period) was in the training or testing group. If the observation is from outside the validation period, split = "Neither"
-   - colville_rf_20211022: The results of the functional connectivity classification for each lake within each time period using a random forest based method
+   - colville_rf_20211022: The results of the functional connectivity classification for each lake within each time period using a random forest-based method.RData file. Can be read using read_rds() function in R. 
         - ID: Lake ID
-        - time_period: The time period for the classification
-        - .pred_class: The predicted functional connectivity of the lake within the specified time period
+        - time_period: The time period (string) for the classification including temporal periods (“2000-2004”, “2005-2009”, “2010-2014”, “2015-2019”), discharge periods (“1”, “2”, “3”, “4”), and the GECI validation period 2013-2016 (“validation”) 
+        - .pred_class: The predicted functional connectivity of the lake within the specified time period (“connected” or “not connected”)
         - split: whether or not the lake (during the validation period) was in the training or testing group. If the observation is from outside the validation period, split = "Neither"  
-   - colville_km_20211022: The results of the functional connectivity classification for each lake within each time period using a kmeans-based method
+   - colville_km_20211022: The results of the functional connectivity classification for each lake within each time period using a kmeans-based method. RData file. Can be read using read_rds() function in R. 
         - ID: Lake ID
-        - time_period: The time period for the classification
-        - .pred_class: The predicted functional connectivity of the lake within the specified time period
+        - time_period: The time period (string) for the classification including temporal periods (“2000-2004”, “2005-2009”, “2010-2014”, “2015-2019”), discharge periods (“1”, “2”, “3”, “4”), and the GECI validation period 2013-2016 (“validation”) 
+        - .pred_class: The predicted functional connectivity of the lake within the specified time period (“connected” or “not connected”)
         - type: describes which lake-to-channel band ratio was used for the classification
    - colville1992Classification.csv: Connectivity validation data from Jorgenson et al. (1997)
         - Row.Number: Index
