@@ -81,7 +81,7 @@ All datafiles mentioned below can be found on Zenodo: http://doi.org/10.5281/zen
       - area_m: lake area in m^2
       - count: Total number of pekel 90% occurence water pixels within the lake boundary
       - Red_count: Total number of cloud free pixels included in the mean,p90, p10 values for all color reflectances
-   - ColvilleChannelExport_1km_20211022.csv, ColvilleChannelExport_2km_20211022.csv, ColvilleChannelExport_5km_20211022.csv, ColvilleChannelExport_10km_20211022.csv: Channel reflectance data - from google earth engine script no.1, also included in data repository. Includes average reflectance data for each lake on each date within a 1km, 2km, 5km, or 10km buffer
+   - ColvilleChannelExport_1km_20211022.csv, ColvilleChannelExport_2km_20211022.csv, ColvilleChannelExport_5km_20211022.csv, ColvilleChannelExport_10km_20211022.csv: Channel reflectance data - from google earth engine script no.1. Includes average reflectance data for each lake on each date within a 1km, 2km, 5km, or 10km buffer
      	- Same as above file, except no ID or delta column, and has one additional column, described below
      	- buffer: distance around the lake to search for channel pixels in kilometers
    - ColvilleShapefilesEdited.shp: The lake polygon shapefiles
