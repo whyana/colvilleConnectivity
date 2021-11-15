@@ -4,7 +4,7 @@ These scripts and data are public for a manuscript currently under review.
 
 ## Data files
 
-All datafiles mentioned below can be found on Zenodo: http://doi.org/10.5281/zenodo.5115099
+All datafiles mentioned below can be found on Zenodo: https://doi.org/10.5281/zenodo.5703146
 
 ## Scripts
 
